@@ -94,8 +94,6 @@
     return len - padding;
 }</code></pre>
 
-          <p class="note">Padding validation is not authentication. CBC ciphertext can be modified, and observable padding failures can become a padding oracle. For anything exposed to untrusted input, the ciphertext needs authentication too.</p>
-
           <h2>How CBC chains the blocks</h2>
 
           <p>AES turns one 16-byte block into another 16-byte block. CBC supplies the chaining around it. Before the first plaintext block enters AES, it is XORed with the IV. Every block after that is XORed with the ciphertext immediately before it.</p>

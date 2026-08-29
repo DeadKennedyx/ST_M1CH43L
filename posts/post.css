@@ -157,17 +157,6 @@ h1 {
   font-size: 13px;
 }
 
-.body-copy .note {
-  margin: 2.3em 0;
-  padding: 19px 21px;
-  border-left: 2px solid var(--acid);
-  background: rgba(182, 255, 88, .045);
-  color: #d5d5d0;
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.7;
-}
-
 .sources {
   margin-top: 70px;
   padding-top: 26px;
