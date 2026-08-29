@@ -29,9 +29,7 @@
         <p class="post-meta">29.08.26 / 8 min read</p>
 
         <div class="body-copy">
-          <p>I wanted to encrypt a byte buffer from C without wrapping another library or handing the whole job to a Windows API. The result is deliberately small: tiny-AES, CBC mode, a 256-bit key, and two short functions for PKCS#7 padding.</p>
-
-          <p>The program performs one transparent round trip: copy, pad, encrypt in place, decrypt, validate the padding, and print the recovered text. The cipher summary below is only the context needed for the static-table experiment.</p>
+          <p>This test is a transparent AES-256-CBC round trip: pad a buffer, encrypt it in place, decrypt it, and recover the original bytes. That is all the cipher context needed for the static-table experiment.</p>
 
           <h2>AES-256-CBC, briefly</h2>
 
@@ -47,7 +45,7 @@
           <pre class="equation"><code>C[0] = AES(key, P[0] XOR IV)
 C[i] = AES(key, P[i] XOR C[i - 1])</code></pre>
 
-          <p>The 16-byte IV must be unpredictable and fresh for each encryption under a key; it can be stored beside the ciphertext. Unpadding must validate every tail byte. Neither padding nor CBC provides authenticity, so production use also needs a MAC or an authenticated mode.</p>
+          <p>The 16-byte IV must be unpredictable and fresh for each encryption under a key; it can be stored beside the ciphertext.</p>
 
           <h2>Why the S-box appears in the binary</h2>
 
@@ -74,7 +72,7 @@ AddRoundKey(Nr, state, RoundKey);</code></pre>
 
           <p>Import-based analysis tools sometimes treat crypto API calls as one signal among many. Removing that import changes the dependency and telemetry profile, but it does not make the operation invisible. AES lookup tables, key-schedule logic, high-entropy output, and the surrounding behavior are all observable. I see the benefit as control over a small dependency, not a way around analysis.</p>
 
-          <p>The trade is that more responsibility moves into my code. tiny-AES does not create keys or IVs, authenticate ciphertext, manage secrets, or provide the platform hardening and acceleration that a mature system crypto provider may offer. Its own documentation prioritizes size, simplicity, and portability over performance.</p>
+          <p>That control also creates an opportunity to hide other static signals: recognizable components such as the S-box tables can be encoded on disk and reconstructed at runtime, reducing the signatures that fingerprint an encryption program.</p>
 
           <h2>Engineering the table-encoding experiment</h2>
 
