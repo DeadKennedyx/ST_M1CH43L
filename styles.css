@@ -134,6 +134,26 @@ a {
   border-top: 1px solid var(--line);
 }
 
+.empty-list {
+  display: grid;
+  min-height: clamp(190px, 28vh, 300px);
+  place-items: center start;
+  border-bottom: 1px solid var(--line);
+}
+
+.empty-state {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.empty-state span {
+  color: var(--acid);
+  animation: blink 1.2s steps(1, end) infinite;
+}
+
 .entry {
   position: relative;
   display: grid;
