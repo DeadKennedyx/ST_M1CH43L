@@ -76,6 +76,112 @@ h1 {
   line-height: 1.65;
 }
 
+.body-copy h2 {
+  margin: 3.2em 0 1em;
+  color: var(--white);
+  font-size: clamp(27px, 4vw, 39px);
+  font-weight: 700;
+  letter-spacing: -.045em;
+  line-height: 1.05;
+}
+
+.body-copy h3 {
+  margin: 2.2em 0 .75em;
+  color: var(--white);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: .05em;
+}
+
+.body-copy a {
+  color: var(--white);
+  text-decoration-color: var(--acid);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
+.body-copy code {
+  font-family: var(--mono);
+}
+
+.body-copy p code,
+.body-copy li code {
+  padding: .12em .32em;
+  border: 1px solid var(--line);
+  color: var(--acid);
+  font-size: .78em;
+}
+
+.body-copy pre {
+  width: min(860px, calc(100vw - 40px));
+  margin: 2.1em 0;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--acid);
+  background: #090909;
+  scrollbar-color: var(--muted) var(--black);
+}
+
+.body-copy pre code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  padding: 22px 24px;
+  color: #c7c7c2;
+  font-size: 12px;
+  line-height: 1.65;
+  tab-size: 4;
+}
+
+.body-copy ul {
+  margin: -0.25em 0 1.8em;
+  padding-left: 1.2em;
+  color: #c7c7c2;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(18px, 2.3vw, 22px);
+  line-height: 1.55;
+}
+
+.body-copy li {
+  margin-bottom: .65em;
+  padding-left: .25em;
+}
+
+.body-copy li::marker {
+  color: var(--acid);
+}
+
+.body-copy .equation code {
+  color: var(--white);
+  font-size: 13px;
+}
+
+.body-copy .note {
+  margin: 2.3em 0;
+  padding: 19px 21px;
+  border-left: 2px solid var(--acid);
+  background: rgba(182, 255, 88, .045);
+  color: #d5d5d0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.sources {
+  margin-top: 70px;
+  padding-top: 26px;
+  border-top: 1px solid var(--line);
+}
+
+.sources p {
+  margin-bottom: 1em;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .08em;
+  line-height: 1.7;
+}
+
 .body-copy p:first-child::first-letter {
   float: left;
   margin: .07em .13em 0 0;
@@ -96,4 +202,5 @@ h1 {
   .post-shell { padding-top: 24px; }
   .post-nav span { display: none; }
   .post-meta { margin-bottom: 48px; }
+  .body-copy pre code { padding: 18px; font-size: 11px; }
 }
