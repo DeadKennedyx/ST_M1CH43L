@@ -52,14 +52,14 @@ article { padding-top: clamp(70px, 12vw, 128px); }
 h1 {
   max-width: 680px;
   margin: 0 0 30px;
-  font-size: clamp(48px, 9vw, 96px);
+  font-size: clamp(38px, 7vw, 72px);
   font-weight: 700;
   letter-spacing: -.075em;
   line-height: .88;
 }
 
 .post-meta {
-  margin-bottom: 70px;
+  margin-bottom: 56px;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 10px;
@@ -72,14 +72,14 @@ h1 {
   margin: 0 0 1.55em;
   color: #c7c7c2;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(19px, 2.4vw, 23px);
-  line-height: 1.65;
+  font-size: clamp(16px, 1.8vw, 19px);
+  line-height: 1.7;
 }
 
 .body-copy h2 {
   margin: 3.2em 0 1em;
   color: var(--white);
-  font-size: clamp(27px, 4vw, 39px);
+  font-size: clamp(23px, 3vw, 32px);
   font-weight: 700;
   letter-spacing: -.045em;
   line-height: 1.05;
@@ -89,7 +89,7 @@ h1 {
   margin: 2.2em 0 .75em;
   color: var(--white);
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 400;
   letter-spacing: .05em;
 }
@@ -129,7 +129,7 @@ h1 {
   min-width: 100%;
   padding: 22px 24px;
   color: #c7c7c2;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.65;
   tab-size: 4;
 }
@@ -139,7 +139,7 @@ h1 {
   padding-left: 1.2em;
   color: #c7c7c2;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(18px, 2.3vw, 22px);
+  font-size: clamp(16px, 1.8vw, 19px);
   line-height: 1.55;
 }
 
@@ -154,7 +154,29 @@ h1 {
 
 .body-copy .equation code {
   color: var(--white);
-  font-size: 13px;
+  font-size: 12px;
+}
+
+.evidence {
+  width: min(620px, calc(100vw - 40px));
+  margin: 1.4em 0 2.2em;
+}
+
+.evidence img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+}
+
+.evidence figcaption {
+  margin-top: 10px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .06em;
+  line-height: 1.6;
+  text-transform: uppercase;
 }
 
 .sources {

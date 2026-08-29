@@ -206,6 +206,38 @@ AES_CBC_decrypt_buffer(&amp;ctx, buffer, padded_len);</code></pre>
 
           <p>The trade is that more responsibility moves into my code. tiny-AES does not create keys or IVs, authenticate ciphertext, manage secrets, or provide the platform hardening and acceleration that a mature system crypto provider may offer. Its own documentation prioritizes size, simplicity, and portability over performance.</p>
 
+          <h2>Static signature, before and after</h2>
+
+          <p>I searched both builds in PE-bear using the standard opening bytes of the AES S-box. In the original build, the sequence is visible directly in the mapped data.</p>
+
+          <figure class="evidence">
+            <img
+              src="../assets/pe-bear-sbox-found.png"
+              alt="PE-bear showing the standard AES S-box byte sequence in the original binary"
+              width="373"
+              height="56"
+              loading="lazy"
+            />
+            <figcaption>01 / Original build: standard S-box sequence found on disk.</figcaption>
+          </figure>
+
+          <p>In the changed build, the same byte search returns no match.</p>
+
+          <figure class="evidence">
+            <img
+              src="../assets/pe-bear-sbox-not-found.png"
+              alt="PE-bear reporting that the standard AES S-box sequence was not found"
+              width="244"
+              height="253"
+              loading="lazy"
+            />
+            <figcaption>02 / Changed build: the same static sequence is not found.</figcaption>
+          </figure>
+
+          <pre class="equation"><code>encoded table on disk → one-time decode → writable table in RAM</code></pre>
+
+          <p>This removes one familiar byte signature from the file, not the AES operation itself. After initialization, a debugger can recover the standard table from memory. The decode loop, Rcon values, key schedule, and round behavior remain useful clues during analysis.</p>
+
           <h2>The round trip as it stands</h2>
 
           <p>The encryption path in <code>main.c</code> is short enough to read without abstraction:</p>
