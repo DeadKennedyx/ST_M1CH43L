@@ -25,31 +25,34 @@ body {
   z-index: 0;
   inset: 0;
   pointer-events: none;
-  background: url("../assets/st-michael.png") 62% top / cover no-repeat;
-  opacity: .16;
-  -webkit-mask-image: linear-gradient(90deg, transparent 12%, rgba(0, 0, 0, .42) 58%, #000 100%);
-  mask-image: linear-gradient(90deg, transparent 12%, rgba(0, 0, 0, .42) 58%, #000 100%);
+  background-image:
+    linear-gradient(90deg, var(--black) 0%, rgba(5, 5, 5, .94) 25%, transparent 72%),
+    linear-gradient(0deg, rgba(5, 5, 5, .12), rgba(5, 5, 5, .12)),
+    url("../assets/st-michael.png");
+  background-position: center, center, center bottom;
+  background-repeat: no-repeat;
+  background-size: cover;
+  filter: contrast(1.04);
 }
 
 .post-creed {
   position: fixed;
-  z-index: 1;
-  right: clamp(20px, 3.5vw, 56px);
-  bottom: clamp(24px, 5vh, 56px);
+  z-index: 3;
+  right: clamp(24px, 5vw, 76px);
+  bottom: clamp(28px, 7vh, 78px);
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  width: max-content;
   margin: 0;
-  color: var(--white);
+  color: #fff;
   font-family: Arial, Helvetica, sans-serif;
-  font-size: clamp(20px, 2.4vw, 36px);
+  font-size: clamp(27px, 3.25vw, 54px);
   font-weight: 800;
   letter-spacing: -.07em;
   line-height: .83;
-  opacity: .14;
   pointer-events: none;
   text-align: right;
+  text-shadow: 0 2px 25px #000, 0 0 2px #000;
   text-transform: uppercase;
   user-select: none;
 }
@@ -256,21 +259,39 @@ h1 {
   font-family: var(--mono);
 }
 
-@media (max-width: 540px) {
+@media (max-width: 900px) {
   .post-background {
-    background-position: 67% top;
-    opacity: .1;
-    -webkit-mask-image: linear-gradient(90deg, transparent, #000 100%);
-    mask-image: linear-gradient(90deg, transparent, #000 100%);
+    background-image:
+      linear-gradient(90deg, var(--black) 0%, rgba(5, 5, 5, .76) 70%, rgba(5, 5, 5, .14)),
+      linear-gradient(0deg, rgba(5, 5, 5, .22), rgba(5, 5, 5, .22)),
+      url("../assets/st-michael.png");
+    background-position: center, center, 67% bottom;
+    background-size: cover;
   }
+
   .post-creed {
-    position: absolute;
-    top: 62px;
-    right: 0;
-    bottom: auto;
-    font-size: 22px;
-    opacity: .18;
+    font-size: clamp(24px, 6vw, 42px);
   }
+}
+
+@media (max-width: 620px) {
+  .post-background {
+    opacity: .72;
+    background-image:
+      linear-gradient(90deg, var(--black) 0%, rgba(5, 5, 5, .9) 58%, rgba(5, 5, 5, .35)),
+      linear-gradient(0deg, var(--black) 0%, transparent 45%, rgba(5, 5, 5, .5) 100%),
+      url("../assets/st-michael.png");
+    background-position: center, center, 64% bottom;
+  }
+
+  .post-creed {
+    right: 20px;
+    bottom: 28px;
+    font-size: 30px;
+  }
+}
+
+@media (max-width: 540px) {
   .post-shell { padding-top: 24px; }
   .post-nav span { display: none; }
   .post-meta { margin-bottom: 48px; }
