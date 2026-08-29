@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="A close look at AES-256-CBC, PKCS#7 padding, IV handling, and the tiny-AES implementation in C."
+      content="A hands-on tiny-AES experiment covering AES-256-CBC, PKCS#7 padding, XOR-encoded S-box tables, runtime decoding, and PE-bear verification."
     />
     <meta name="theme-color" content="#050505" />
     <title>Hide encryption signatures from analysis — ST_M1CH43L</title>
@@ -26,7 +26,7 @@
       <article>
         <p class="kicker">// transmission 001</p>
         <h1>Hide encryption signatures from analysis</h1>
-        <p class="post-meta">29.08.26 / 10 min read</p>
+        <p class="post-meta">29.08.26 / 13 min read</p>
 
         <div class="body-copy">
           <p>I wanted to encrypt a byte buffer from C without wrapping another library or handing the whole job to a Windows API. The result is deliberately small: tiny-AES, CBC mode, a 256-bit key, and two short functions for PKCS#7 padding.</p>
@@ -206,6 +206,90 @@ AES_CBC_decrypt_buffer(&amp;ctx, buffer, padded_len);</code></pre>
 
           <p>The trade is that more responsibility moves into my code. tiny-AES does not create keys or IVs, authenticate ciphertext, manage secrets, or provide the platform hardening and acceleration that a mature system crypto provider may offer. Its own documentation prioritizes size, simplicity, and portability over performance.</p>
 
+          <h2>Engineering the table-encoding experiment</h2>
+
+          <p>The first PE-bear inspection established a baseline. The normal tiny-AES build stored the forward S-box as 256 literal bytes in <code>.rdata</code>, beginning with the familiar sequence <code>63 7C 77 7B F2 6B 6F C5</code>. Searching the file for that prefix led directly to the table. The inverse S-box used by decryption had the same property, starting with <code>52 09 6A D5</code>.</p>
+
+          <p>The experiment was to change the representation on disk without changing the AES computation. Instead of compiling the standard table bytes into the executable, I would compile an XOR-encoded copy into read-only data, reserve writable storage for the real table, and restore it when the AES context is initialized.</p>
+
+          <pre class="equation"><code>encoded byte = AES table byte XOR 0xA7
+runtime byte = encoded byte XOR 0xA7</code></pre>
+
+          <h3>01 / Encode constants during compilation</h3>
+
+          <p>I started with two macros near the top of <code>aes.c</code>. <code>ENC_BYTE</code> receives a literal constant, so the compiler evaluates the XOR while building the initializer. For example, <code>ENC_BYTE(0x63)</code> emits <code>C4</code> into the file because <code>63 XOR A7 = C4</code>. It does not emit <code>63</code> and wait until runtime to perform that first operation.</p>
+
+          <pre><code>#define TABLE_XOR_KEY 0xA7
+#define ENC_BYTE(x) ((uint8_t)((x) ^ TABLE_XOR_KEY))</code></pre>
+
+          <p>The original constant S-box became <code>encoded_sbox</code>, with every one of its 256 values wrapped in the macro. A separate zero-initialized array provides the writable runtime table used by the existing lookup code.</p>
+
+          <pre><code>static const uint8_t encoded_sbox[256] = {
+    ENC_BYTE(0x63), ENC_BYTE(0x7c),
+    ENC_BYTE(0x77), ENC_BYTE(0x7b),
+    ENC_BYTE(0xf2), ENC_BYTE(0x6b),
+    ENC_BYTE(0x6f), ENC_BYTE(0xc5),
+    /* ...all 256 original values... */
+};
+
+static uint8_t sbox[256];</code></pre>
+
+          <p>The encoded array remains constant and normally lands in read-only initialized data. The zero-initialized runtime array needs writable storage and is normally represented as uninitialized data in the image. The exact PE section layout is a linker decision, but the important distinction is that the standard lookup bytes are no longer present in their original form on disk.</p>
+
+          <h3>02 / Apply the same transformation to decryption</h3>
+
+          <p>Changing only the forward table would make encryption work while leaving a second recognizable AES table in the executable. More importantly, this program calls <code>AES_CBC_decrypt_buffer</code>, whose inverse round uses <code>rsbox</code>. I therefore encoded all 256 inverse S-box values and added a writable runtime copy as well.</p>
+
+          <pre><code>#if (defined(CBC) &amp;&amp; CBC == 1) || \
+    (defined(ECB) &amp;&amp; ECB == 1)
+static const uint8_t encoded_rsbox[256] = {
+    ENC_BYTE(0x52), ENC_BYTE(0x09),
+    ENC_BYTE(0x6a), ENC_BYTE(0xd5),
+    /* ...all 256 original values... */
+};
+
+static uint8_t rsbox[256];
+#endif</code></pre>
+
+          <p>I kept tiny-AES's mode guard around the inverse table. A CTR-only build does not need inverse AES rounds, so it should not allocate or reference <code>rsbox</code>.</p>
+
+          <h3>03 / Restore both tables during initialization</h3>
+
+          <p>The decoder walks both encoded arrays and applies the same XOR key again. XOR is its own inverse, so the second operation reconstructs the exact bytes expected by <code>SubBytes</code> and <code>InvSubBytes</code>.</p>
+
+          <pre><code>static void decode_tables(void)
+{
+    for (size_t i = 0; i &lt; 256; i++) {
+        sbox[i] = encoded_sbox[i] ^ TABLE_XOR_KEY;
+
+#if (defined(CBC) &amp;&amp; CBC == 1) || \
+    (defined(ECB) &amp;&amp; ECB == 1)
+        rsbox[i] = encoded_rsbox[i] ^ TABLE_XOR_KEY;
+#endif
+    }
+}</code></pre>
+
+          <p>I call the decoder before key expansion in the public initialization functions. The CBC path used by this test now begins like this:</p>
+
+          <pre><code>void AES_init_ctx_iv(struct AES_ctx* ctx,
+                     const uint8_t* key,
+                     const uint8_t* iv)
+{
+    decode_tables();
+    KeyExpansion(ctx-&gt;RoundKey, key);
+    memcpy(ctx-&gt;Iv, iv, AES_BLOCKLEN);
+}</code></pre>
+
+          <p>The non-IV <code>AES_init_ctx</code> path calls the same decoder so both public initialization routes produce a ready table. In this round-trip test, initialization happens once before encryption and again before decryption. Repeating the decode is harmless because every pass writes the same values.</p>
+
+          <h3>04 / Verify behavior before inspecting the PE</h3>
+
+          <p>After rebuilding, I ran the full CBC round trip rather than treating a successful compile as proof. The ciphertext was produced, decryption recovered the padded plaintext, PKCS#7 validation succeeded, and the program exited with code zero. A direct byte scan of the rebuilt executable found both encoded prefixes while returning no match for either original S-box prefix.</p>
+
+          <pre class="equation"><code>compile → encrypt → decrypt → validate plaintext → inspect executable</code></pre>
+
+          <p>With the functional behavior preserved, the PE-bear comparison becomes the result of the experiment rather than its premise.</p>
+
           <h2>Static signature, before and after</h2>
 
           <p>I searched both builds in PE-bear using the standard opening bytes of the AES S-box. In the original build, the sequence is visible directly in the mapped data.</p>
@@ -234,7 +318,7 @@ AES_CBC_decrypt_buffer(&amp;ctx, buffer, padded_len);</code></pre>
             <figcaption>02 / Changed build: the same static sequence is not found.</figcaption>
           </figure>
 
-          <pre class="equation"><code>encoded table on disk → one-time decode → writable table in RAM</code></pre>
+          <pre class="equation"><code>encoded table on disk → initialization-time decode → writable table in RAM</code></pre>
 
           <p>This removes one familiar byte signature from the file, not the AES operation itself. After initialization, a debugger can recover the standard table from memory. The decode loop, Rcon values, key schedule, and round behavior remain useful clues during analysis.</p>
 
