@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="A hands-on tiny-AES experiment covering AES-256-CBC, PKCS#7 padding, XOR-encoded S-box tables, runtime decoding, and PE-bear verification."
+      content="A tiny-AES experiment that XOR-encodes S-box tables on disk, restores them at initialization, and verifies the changed PE signature."
     />
     <meta name="theme-color" content="#050505" />
     <title>Hide encryption signatures from analysis — ST_M1CH43L</title>
@@ -26,177 +26,47 @@
       <article>
         <p class="kicker">// transmission 001</p>
         <h1>Hide encryption signatures from analysis</h1>
-        <p class="post-meta">29.08.26 / 13 min read</p>
+        <p class="post-meta">29.08.26 / 8 min read</p>
 
         <div class="body-copy">
           <p>I wanted to encrypt a byte buffer from C without wrapping another library or handing the whole job to a Windows API. The result is deliberately small: tiny-AES, CBC mode, a 256-bit key, and two short functions for PKCS#7 padding.</p>
 
-          <p>The test program does one round trip. It copies a harmless string into a fixed buffer, pads it to a multiple of 16 bytes, encrypts it in place, decrypts it, validates the padding, and prints the original text. Nothing is hidden behind a helper class. I can follow the bytes from the first <code>memcpy</code> to the last <code>printf</code>.</p>
+          <p>The program performs one transparent round trip: copy, pad, encrypt in place, decrypt, validate the padding, and print the recovered text. The cipher summary below is only the context needed for the static-table experiment.</p>
 
-          <h2>What is actually configured</h2>
+          <h2>AES-256-CBC, briefly</h2>
 
-          <p>The name AES-256 describes the key, not the block. AES always operates on 128-bit blocks. That means 16 bytes per block whether the key is 128, 192, or 256 bits. In my copy of <code>aes.h</code>, the relevant definitions are:</p>
+          <p>AES-256 names the 32-byte key size; the block is always 16 bytes. This build uses 14 rounds and a 240-byte expanded key schedule:</p>
 
-          <pre><code>// #define AES128 1
-// #define AES192 1
-#define AES256 1
+          <pre><code>#define AES256 1
+#define AES_BLOCKLEN 16
+#define AES_KEYLEN 32
+#define AES_keyExpSize 240</code></pre>
 
-#define AES_BLOCKLEN 16 // AES always has a 128-bit block
-
-#if defined(AES256) &amp;&amp; (AES256 == 1)
-    #define AES_KEYLEN 32
-    #define AES_keyExpSize 240
-#endif</code></pre>
-
-          <p><code>AES_KEYLEN</code> is 32 bytes, while <code>AES_BLOCKLEN</code> stays at 16. AES-256 also uses 14 rounds. The 240-byte expanded-key buffer holds fifteen 16-byte round keys: one before the first full round, thirteen for the middle rounds, and one for the last round.</p>
-
-          <h2>Padding the input</h2>
-
-          <p>CBC only accepts complete blocks. A 27-byte input cannot go straight into this function; its length has to become 32 bytes first. I used PKCS#7, where every padding byte contains the number of bytes added.</p>
-
-          <p>If five bytes are needed, the tail is <code>05 05 05 05 05</code>. If the input is already aligned to 16 bytes, PKCS#7 adds a complete block of sixteen <code>10</code> bytes. That extra block is not wasted. It is what makes unpadding unambiguous.</p>
-
-          <pre><code>static size_t pkcs7_pad(uint8_t* buffer, size_t len, size_t capacity)
-{
-    size_t padding = AES_BLOCKLEN - (len % AES_BLOCKLEN);
-
-    if (len + padding &gt; capacity) {
-        return 0;
-    }
-
-    for (size_t i = 0; i &lt; padding; i++) {
-        buffer[len + i] = (uint8_t)padding;
-    }
-
-    return len + padding;
-}</code></pre>
-
-          <p>The reverse path checks more than the last byte. Every byte in the claimed padding range has to carry the same value. That catches malformed padding before the program treats the result as plaintext.</p>
-
-          <pre><code>static size_t pkcs7_unpad(uint8_t* buffer, size_t len)
-{
-    if (len == 0 || len % AES_BLOCKLEN != 0) {
-        return 0;
-    }
-
-    uint8_t padding = buffer[len - 1];
-
-    if (padding == 0 || padding &gt; AES_BLOCKLEN) {
-        return 0;
-    }
-
-    for (size_t i = 0; i &lt; padding; i++) {
-        if (buffer[len - 1 - i] != padding) {
-            return 0;
-        }
-    }
-
-    return len - padding;
-}</code></pre>
-
-          <h2>How CBC chains the blocks</h2>
-
-          <p>AES turns one 16-byte block into another 16-byte block. CBC supplies the chaining around it. Before the first plaintext block enters AES, it is XORed with the IV. Every block after that is XORed with the ciphertext immediately before it.</p>
+          <p>CBC accepts only complete blocks, so PKCS#7 appends <code>n</code> bytes whose value is <code>n</code>. It then XORs the first plaintext block with the IV and each later block with the previous ciphertext block:</p>
 
           <pre class="equation"><code>C[0] = AES(key, P[0] XOR IV)
 C[i] = AES(key, P[i] XOR C[i - 1])</code></pre>
 
-          <p>This is visible almost line for line in <code>aes.c</code>:</p>
+          <p>The 16-byte IV must be unpredictable and fresh for each encryption under a key; it can be stored beside the ciphertext. Unpadding must validate every tail byte. Neither padding nor CBC provides authenticity, so production use also needs a MAC or an authenticated mode.</p>
 
-          <pre><code>static void XorWithIv(uint8_t* buf, const uint8_t* Iv)
-{
-    uint8_t i;
-    for (i = 0; i &lt; AES_BLOCKLEN; ++i) {
-        buf[i] ^= Iv[i];
-    }
+          <h2>Why the S-box appears in the binary</h2>
+
+          <p>AES represents each block as a 4×4 byte state. Stripped to the relevant operations, AES-256 applies an initial round key, thirteen full rounds, and a final round without <code>MixColumns</code>:</p>
+
+          <pre><code>AddRoundKey(0, state, RoundKey);
+
+for (uint8_t round = 1; round &lt; Nr; round++) {
+    SubBytes(state);
+    ShiftRows(state);
+    MixColumns(state);
+    AddRoundKey(round, state, RoundKey);
 }
 
-void AES_CBC_encrypt_buffer(struct AES_ctx* ctx,
-                            uint8_t* buf,
-                            size_t length)
-{
-    size_t i;
-    uint8_t* Iv = ctx-&gt;Iv;
+SubBytes(state);
+ShiftRows(state);
+AddRoundKey(Nr, state, RoundKey);</code></pre>
 
-    for (i = 0; i &lt; length; i += AES_BLOCKLEN) {
-        XorWithIv(buf, Iv);
-        Cipher((state_t*)buf, ctx-&gt;RoundKey);
-        Iv = buf;
-        buf += AES_BLOCKLEN;
-    }
-
-    memcpy(ctx-&gt;Iv, Iv, AES_BLOCKLEN);
-}</code></pre>
-
-          <p><code>Iv = buf</code> is the chain. After <code>Cipher</code> returns, that section of the buffer contains ciphertext, so it becomes the XOR input for the next block. The operation is in place; the plaintext is replaced as the loop advances.</p>
-
-          <p>Decryption goes in the opposite order. The current ciphertext block is saved, AES is reversed, the result is XORed with the previous ciphertext block (or the original IV for block zero), and the saved block becomes the next IV.</p>
-
-          <h2>Inside one AES-256 block</h2>
-
-          <p>Internally, the 16 bytes are treated as a 4×4 byte state. Before the numbered rounds start, AES XORs that state with round key zero. Rounds 1 through 13 perform four operations. Round 14 skips <code>MixColumns</code>.</p>
-
-          <pre><code>static void Cipher(state_t* state, const uint8_t* RoundKey)
-{
-    uint8_t round = 0;
-
-    AddRoundKey(0, state, RoundKey);
-
-    for (round = 1; ; ++round) {
-        SubBytes(state);
-        ShiftRows(state);
-
-        if (round == Nr) {
-            break;
-        }
-
-        MixColumns(state);
-        AddRoundKey(round, state, RoundKey);
-    }
-
-    AddRoundKey(Nr, state, RoundKey);
-}</code></pre>
-
-          <h3>01 / SubBytes</h3>
-          <p>Each byte is replaced through the AES S-box. This is the nonlinear part of the cipher. Without it, the rest would reduce to linear operations that could be unwound with ordinary algebra. tiny-AES keeps the 256-byte S-box as a constant lookup table.</p>
-
-          <h3>02 / ShiftRows</h3>
-          <p>The first row stays put. The next three rows rotate left by one, two, and three positions. No byte value changes here; the bytes only move. The point is to stop each column from remaining an isolated group.</p>
-
-          <h3>03 / MixColumns</h3>
-          <p>Each column is multiplied by a fixed matrix in the finite field GF(2<sup>8</sup>). In practical terms, a change to one input byte spreads across the four bytes in that column. tiny-AES does the field arithmetic with XOR and an <code>xtime</code> helper rather than normal integer multiplication.</p>
-
-          <h3>04 / AddRoundKey</h3>
-          <p>The state is XORed with the round key. Those keys are derived from the original 32-byte key by the AES-256 key schedule, which rotates words, applies the same S-box, mixes in round constants, and performs the additional AES-256 <code>SubWord</code> step halfway through each eight-word cycle.</p>
-
-          <p>The last round still runs <code>SubBytes</code>, <code>ShiftRows</code>, and <code>AddRoundKey</code>. It omits <code>MixColumns</code>. That detail is easy to miss when AES is reduced to a four-box diagram, but the break in the code makes it obvious.</p>
-
-          <h2>The IV is part of the design</h2>
-
-          <p>My current test uses a hard-coded IV:</p>
-
-          <pre><code>uint8_t iv[AES_BLOCKLEN] = {
-    0x10, 0x11, 0x12, 0x13,
-    0x14, 0x15, 0x16, 0x17,
-    0x18, 0x19, 0x1A, 0x1B,
-    0x1C, 0x1D, 0x1E, 0x1F
-};</code></pre>
-
-          <p>That is useful for a repeatable test and wrong for real encryption. It even duplicates the second half of the demo key. For production, CBC needs a newly generated, unpredictable 16-byte IV for every encryption performed with a given key. The IV does not need to be secret. It can be stored directly before the ciphertext:</p>
-
-          <pre class="equation"><code>[ 16-byte IV ][ CBC ciphertext ... ]</code></pre>
-
-          <p>It does need to come from a cryptographically secure random source. <code>rand()</code>, timestamps, counters, and hand-rolled generators are not substitutes. A small cipher dependency does not make random generation dependency-free; the program still needs a trusted source for keys and IVs.</p>
-
-          <p>There is another detail in the test that initially looks redundant:</p>
-
-          <pre><code>AES_init_ctx_iv(&amp;ctx, key, iv);
-AES_CBC_encrypt_buffer(&amp;ctx, buffer, padded_len);
-
-AES_init_ctx_iv(&amp;ctx, key, iv);
-AES_CBC_decrypt_buffer(&amp;ctx, buffer, padded_len);</code></pre>
-
-          <p>The second initialization is required. The encryption function updates <code>ctx.Iv</code> to the last ciphertext block so that another call could continue the chain. Decryption has to restart from the original IV, not from that final block.</p>
+          <p><code>SubBytes</code> is the nonlinear step and indexes a fixed 256-byte S-box; decryption indexes its inverse. <code>ShiftRows</code> permutes bytes, <code>MixColumns</code> diffuses each column in GF(2<sup>8</sup>), and <code>AddRoundKey</code> XORs the expanded key. Those compiled lookup tables are the recognizable signatures this experiment changes, so a deeper AES walkthrough is unnecessary here.</p>
 
           <h2>Why tiny-AES instead of BCrypt</h2>
 

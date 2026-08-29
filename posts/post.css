@@ -52,7 +52,7 @@ article { padding-top: clamp(70px, 12vw, 128px); }
 h1 {
   max-width: 680px;
   margin: 0 0 30px;
-  font-size: clamp(38px, 7vw, 72px);
+  font-size: clamp(34px, 6vw, 60px);
   font-weight: 700;
   letter-spacing: -.075em;
   line-height: .88;
@@ -72,14 +72,14 @@ h1 {
   margin: 0 0 1.55em;
   color: #c7c7c2;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(16px, 1.8vw, 19px);
-  line-height: 1.7;
+  font-size: clamp(15px, 1.55vw, 17px);
+  line-height: 1.65;
 }
 
 .body-copy h2 {
   margin: 3.2em 0 1em;
   color: var(--white);
-  font-size: clamp(23px, 3vw, 32px);
+  font-size: clamp(21px, 2.6vw, 28px);
   font-weight: 700;
   letter-spacing: -.045em;
   line-height: 1.05;
@@ -89,7 +89,7 @@ h1 {
   margin: 2.2em 0 .75em;
   color: var(--white);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 400;
   letter-spacing: .05em;
 }
@@ -139,7 +139,7 @@ h1 {
   padding-left: 1.2em;
   color: #c7c7c2;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(16px, 1.8vw, 19px);
+  font-size: clamp(15px, 1.55vw, 17px);
   line-height: 1.55;
 }
 
