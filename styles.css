@@ -1,0 +1,354 @@
+:root {
+  color-scheme: dark;
+  --black: #050505;
+  --white: #f1f1ed;
+  --muted: #787875;
+  --line: rgba(241, 241, 237, 0.15);
+  --acid: #b6ff58;
+  --mono: "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo,
+    Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--black);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100svh;
+  margin: 0;
+  overflow: hidden;
+  background: var(--black);
+  color: var(--white);
+  font-family: var(--mono);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+}
+
+.background {
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  background-image:
+    linear-gradient(90deg, var(--black) 0%, rgba(5, 5, 5, 0.94) 25%, transparent 72%),
+    linear-gradient(0deg, rgba(5, 5, 5, 0.12), rgba(5, 5, 5, 0.12)),
+    url("assets/st-michael.png");
+  background-position: center, center, center bottom;
+  background-repeat: no-repeat;
+  background-size: cover;
+  filter: contrast(1.04);
+}
+
+.noise {
+  position: fixed;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.055;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+}
+
+.shell {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  width: min(59vw, 900px);
+  min-height: 100svh;
+  padding: clamp(28px, 4vw, 64px) clamp(24px, 5vw, 80px);
+}
+
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.wordmark {
+  display: inline-flex;
+  align-items: baseline;
+  color: var(--white);
+  font-size: clamp(15px, 1.25vw, 19px);
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-decoration: none;
+}
+
+.prompt {
+  margin-right: 0.7em;
+  color: var(--acid);
+}
+
+.cursor {
+  color: var(--acid);
+  animation: blink 1.2s steps(1, end) infinite;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.status i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--acid);
+  box-shadow: 0 0 10px rgba(182, 255, 88, 0.65);
+}
+
+.entries {
+  align-self: center;
+  width: min(100%, 720px);
+  padding: 10vh 0 5vh;
+}
+
+.section-label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.section-label span:first-child {
+  color: var(--acid);
+}
+
+.entry-list {
+  border-top: 1px solid var(--line);
+}
+
+.entry {
+  position: relative;
+  display: grid;
+  grid-template-columns: 50px 1fr auto;
+  align-items: center;
+  min-height: clamp(86px, 10vh, 112px);
+  border-bottom: 1px solid var(--line);
+  text-decoration: none;
+  transition: border-color 220ms ease;
+}
+
+.entry::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: rgba(241, 241, 237, 0.035);
+  content: "";
+  opacity: 0;
+  transform: scaleX(0.98);
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+
+.entry-index {
+  align-self: start;
+  padding-top: 29px;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+
+.entry-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 24px 12px 22px 0;
+}
+
+.entry-title {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: clamp(22px, 2.45vw, 38px);
+  font-weight: 400;
+  letter-spacing: -0.045em;
+  line-height: 1;
+  transition: transform 220ms ease, color 220ms ease;
+}
+
+.entry-meta {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.entry-arrow {
+  padding-right: 4px;
+  color: var(--acid);
+  font-size: 19px;
+  opacity: 0;
+  transform: translate(-8px, 8px);
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+
+.entry:hover,
+.entry:focus-visible {
+  border-color: rgba(182, 255, 88, 0.48);
+  outline: none;
+}
+
+.entry:hover::before,
+.entry:focus-visible::before {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.entry:hover .entry-title,
+.entry:focus-visible .entry-title {
+  color: #fff;
+  transform: translateX(8px);
+}
+
+.entry:hover .entry-arrow,
+.entry:focus-visible .entry-arrow {
+  opacity: 1;
+  transform: translate(0, 0);
+}
+
+.footer-line {
+  display: flex;
+  gap: 8px;
+  color: var(--acid);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.footer-command {
+  color: var(--muted);
+}
+
+.creed {
+  position: fixed;
+  z-index: 3;
+  right: clamp(24px, 5vw, 76px);
+  bottom: clamp(28px, 7vh, 78px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin: 0;
+  color: #fff;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: clamp(27px, 3.25vw, 54px);
+  font-weight: 800;
+  letter-spacing: -0.07em;
+  line-height: 0.83;
+  text-align: right;
+  text-transform: uppercase;
+  text-shadow: 0 2px 25px #000, 0 0 2px #000;
+}
+
+.creed span:first-child::before {
+  margin-right: 0.34em;
+  color: var(--acid);
+  content: "+";
+  font-family: var(--mono);
+  font-size: 0.42em;
+  font-weight: 400;
+  vertical-align: middle;
+}
+
+@keyframes blink {
+  0%,
+  48% {
+    opacity: 1;
+  }
+  49%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  body {
+    overflow-y: auto;
+  }
+
+  .background {
+    background-image:
+      linear-gradient(90deg, var(--black) 0%, rgba(5, 5, 5, 0.76) 70%, rgba(5, 5, 5, 0.14)),
+      linear-gradient(0deg, rgba(5, 5, 5, 0.22), rgba(5, 5, 5, 0.22)),
+      url("assets/st-michael.png");
+    background-position: center, center, 67% bottom;
+    background-size: cover;
+  }
+
+  .shell {
+    width: min(78vw, 700px);
+  }
+
+  .creed {
+    font-size: clamp(24px, 6vw, 42px);
+  }
+}
+
+@media (max-width: 620px) {
+  .background {
+    opacity: 0.72;
+    background-image:
+      linear-gradient(90deg, var(--black) 0%, rgba(5, 5, 5, 0.9) 58%, rgba(5, 5, 5, 0.35)),
+      linear-gradient(0deg, var(--black) 0%, transparent 45%, rgba(5, 5, 5, 0.5) 100%),
+      url("assets/st-michael.png");
+    background-position: center, center, 64% bottom;
+  }
+
+  .shell {
+    width: 100%;
+    min-height: 100svh;
+    padding: 24px 20px 28px;
+  }
+
+  .status {
+    display: none;
+  }
+
+  .entries {
+    align-self: start;
+    padding-top: 13vh;
+    padding-bottom: 28vh;
+  }
+
+  .entry {
+    grid-template-columns: 40px 1fr auto;
+    min-height: 92px;
+  }
+
+  .entry-index {
+    padding-top: 28px;
+  }
+
+  .entry-title {
+    font-size: clamp(22px, 7vw, 30px);
+  }
+
+  .creed {
+    right: 20px;
+    bottom: 28px;
+    font-size: 30px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
