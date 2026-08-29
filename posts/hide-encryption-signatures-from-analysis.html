@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="A tiny-AES experiment that XOR-encodes S-box tables on disk, restores them at initialization, and verifies the changed PE signature."
+      content="A tiny-AES experiment that encodes S-box tables, generates Rcon during key expansion, and verifies both PE signature changes."
     />
     <meta name="theme-color" content="#050505" />
     <title>Hide encryption signatures from analysis — ST_M1CH43L</title>
@@ -26,7 +26,7 @@
       <article>
         <p class="kicker">// transmission 001</p>
         <h1>Hide encryption signatures from analysis</h1>
-        <p class="post-meta">29.08.26 / 7 min read</p>
+        <p class="post-meta">29.08.26 / 8 min read</p>
 
         <div class="body-copy">
           <p>This test is a transparent AES-256-CBC round trip: pad a buffer, encrypt it in place, decrypt it, and recover the original bytes. That is all the cipher context needed for the static-table experiment.</p>
@@ -191,6 +191,40 @@ static uint8_t rsbox[256];
           <pre class="equation"><code>encoded table on disk → initialization-time decode → writable table in RAM</code></pre>
 
           <p>This removes one familiar byte signature from the file, not the AES operation itself. After initialization, a debugger can recover the standard table from memory. The decode loop, Rcon values, key schedule, and round behavior remain useful clues during analysis.</p>
+
+          <h2>Generate round constants, not a table</h2>
+
+          <p>The next change removes the 11-byte <code>Rcon[]</code> lookup from the file. Key expansion still consumes the same AES round constants in the same order; only their source changes. The current value is advanced as multiplication by <code>{02}</code> in GF(2<sup>8</sup>):</p>
+
+          <pre><code>static uint8_t rcon_next(uint8_t x)
+{
+    if (x &amp; 0x80) {
+        return (uint8_t)((x &lt;&lt; 1) ^ 0x1B);
+    }
+
+    return (uint8_t)(x &lt;&lt; 1);
+}</code></pre>
+
+          <p><code>KeyExpansion</code> starts with <code>0x01</code>, applies the current constant, and then generates the next one:</p>
+
+          <pre><code>uint8_t rcon = 0x01;
+
+/* ...inside the i % Nk == 0 step... */
+tempa[0] ^= rcon;
+rcon = rcon_next(rcon);</code></pre>
+
+          <p>I built both revisions with the same MSVC x64 Release configuration. A raw-data scan—the same search used in PE-bear—found <code>8D 01 02 04 08 10 20 40 80 1B 36</code> at file offset <code>0x2900</code> in <code>aes_before.exe</code>, inside <code>.rdata + 0x300</code>. The complete sequence is absent from <code>aes_after.exe</code>.</p>
+
+          <pre class="equation"><code>check                     before       after
+Rcon sequence             present      absent
+Rcon stored in .rdata     yes          no
+0x1B still present        yes          yes
+.rdata virtual size       0x1168       0x1158
+.text virtual size        0x2138       0x2108
+program exit              0            0
+ciphertext                identical    identical</code></pre>
+
+          <p>The raw <code>.rdata</code> allocation remains <code>0x1200</code> bytes because of file alignment. In <code>.text</code>, MSVC replaced the table load with shift, <code>0x1B</code> XOR, high-bit test, and conditional-move instructions; optimization made the section slightly smaller overall. Individual values such as <code>0x1B</code> remain normal. What disappeared is the contiguous Rcon fingerprint, not the AES algorithm.</p>
 
           <div class="sources">
             <p>// references</p>
