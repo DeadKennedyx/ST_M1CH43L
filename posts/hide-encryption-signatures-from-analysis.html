@@ -296,12 +296,6 @@ decrypted plaintext            identical    identical</code></pre>
 
           <p>This is a more meaningful obstacle than the original encoding. A scanner cannot recover the S-box by finding a transformed 256-byte permutation, and a debugger cannot wait for initialization and dump the completed tables. Static analysis now has to follow the calculation itself; dynamic analysis has to observe calls and rebuild the input/output mapping over time.</p>
 
-          <h3>What an analyst can still recognize</h3>
-
-          <p>The tableless build does not make AES disappear. Its disassembly still contains the constants and instruction patterns used to calculate the substitutions, along with the AES-256 key expansion and fourteen unrolled rounds. Those clues are enough for an experienced reverse engineer to identify the algorithm or confirm it through emulation.</p>
-
-          <p>The improvement is therefore narrow but concrete. XOR encoding made the S-box look different; runtime calculation removes the S-box as a data object. That takes away an easy static signature and the simplest runtime-dump point, forcing analysis toward the behavior of the code instead of a recognizable block of bytes.</p>
-
           <h2>Conclusion</h2>
 
           <p>Encoding and then eliminating the S-box tables, generating Rcon at runtime, and fully unrolling the rounds removed several recognizable patterns from the file without changing the AES result. The final algebraic revision is more effective for this narrow table-signature goal because there is no complete S-box to decode or dump, but the improvement is specific to representation. Static and dynamic analysis can still recognize the runtime substitution logic, key schedule, round transformations, and overall data flow.</p>
