@@ -235,14 +235,6 @@ e8f7c7005b3cc1a3e159a901a92a91d8
 
           <p>The optimized validation artifact contains no direct materialization of <code>0x1B</code>, <code>0x63</code>, or <code>254</code>, and no symbols named for the old S-box, rotation, generic field multiplication, or individual round stages. This result is compiler-specific, so the same inspection must be repeated on the exact MSVC Release PE that is deployed.</p>
 
-          <h2>What this still does not hide</h2>
-
-          <p>A fixed circuit can itself become a signature. The Boyar-Peralta network is public and its data flow can be fingerprinted even when its temporary names are absent. Fourteen repeated nonlinear layers, the key-expansion dependencies, 16-byte state, CBC chaining, and known input/output behavior still support semantic identification.</p>
-
-          <p>Dynamic analysis is stronger still. A debugger can collect all 256 circuit inputs and outputs, observe the computed reduction byte, or stop after key expansion and dump the complete round-key schedule. This repository also deliberately embeds a demonstration key, IV, and a string containing <code>tiny-AES</code>. Those make sense for a reproducible experiment, not for protecting a production secret.</p>
-
-          <p>The outcome is narrower and measurable: several easy static anchors have been replaced by a Boolean data-flow problem, while every tested AES result remains unchanged. That raises the cost of analysis without treating representation changes as cryptographic security.</p>
-
           <h2 id="detector-results">Conclusion: measured against real scanners</h2>
 
           <p>I froze the test inputs on 30 August 2026 and built a 21-file Windows x64 matrix: stock tiny-AES, the Part 1 implementation, and the Part 2 implementation under seven compiler profiles. MinGW GCC 16.2.0 produced <code>-O0</code>, <code>-O2</code>, <code>-Os</code>, and <code>-O2 -flto</code> artifacts. Apple Clang 17, targeting <code>x86_64-w64-windows-gnu</code> and linking with MinGW, produced <code>-O0</code>, <code>-O2</code>, and <code>-Os</code> artifacts. Every PE was stripped and linked without a timestamp.</p>
