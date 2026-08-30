@@ -298,15 +298,6 @@ a {
     overflow-y: auto;
   }
 
-  .background {
-    background-image:
-      linear-gradient(90deg, var(--black) 0%, rgba(5, 5, 5, 0.76) 70%, rgba(5, 5, 5, 0.14)),
-      linear-gradient(0deg, rgba(5, 5, 5, 0.22), rgba(5, 5, 5, 0.22)),
-      url("assets/st-michael.png");
-    background-position: center, center, right bottom;
-    background-size: cover, cover, contain;
-  }
-
   .shell {
     width: min(78vw, 700px);
   }
@@ -317,16 +308,6 @@ a {
 }
 
 @media (max-width: 620px) {
-  .background {
-    opacity: 0.72;
-    background-image:
-      linear-gradient(90deg, var(--black) 0%, rgba(5, 5, 5, 0.9) 58%, rgba(5, 5, 5, 0.35)),
-      linear-gradient(0deg, var(--black) 0%, transparent 45%, rgba(5, 5, 5, 0.5) 100%),
-      url("assets/st-michael.png");
-    background-position: center, center, right bottom;
-    background-size: cover, cover, contain;
-  }
-
   .shell {
     width: 100%;
     min-height: 100svh;
