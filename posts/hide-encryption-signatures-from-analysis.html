@@ -279,6 +279,12 @@ decrypted plaintext            identical    identical</code></pre>
 
           <p>The cost is size: <code>.text</code> grew by 4,880 bytes, or 57.7%, and the complete PE grew by 5,120 bytes, or 30.3%. This removes the compact round-loop shape and its branch overhead, but it does not conceal AES. Repeated round bodies and fixed round-key offsets give an analyst a different—and in places more explicit—view of the same algorithm.</p>
 
+          <h2>Conclusion</h2>
+
+          <p>Encoding the S-boxes, generating Rcon at runtime, and fully unrolling the rounds removed several recognizable on-disk patterns without changing the AES result. That defeats those exact byte and loop-shape searches, not detection itself: advanced static and dynamic analysis can still recover the runtime tables and recognize the key schedule, round transformations, and overall data flow.</p>
+
+          <p>Part 2 will examine the next layer from an analysis and defensive-engineering perspective: control-flow flattening and mixed Boolean-arithmetic transformations that reshape a program's graph and expressions, plus white-box cryptography, which attempts to protect keys even when execution and memory are observable. The focus will be what each technique changes, what remains visible, and its cost in performance, maintainability, and key protection—because none of them is a guarantee of invisibility.</p>
+
           <div class="sources">
             <p>// references</p>
             <p><a href="https://csrc.nist.gov/pubs/fips/197/final" rel="noreferrer">NIST FIPS 197 — Advanced Encryption Standard</a></p>
