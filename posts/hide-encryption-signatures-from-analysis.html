@@ -8,7 +8,7 @@
       content="A tiny-AES experiment that encodes S-box tables, generates Rcon during key expansion, fully unrolls AES rounds, and compares the PE changes."
     />
     <meta name="theme-color" content="#050505" />
-    <title>Hide encryption signatures from analysis — ST_M1CH43L</title>
+    <title>Hide encryption signatures from analysis - ST_M1CH43L</title>
     <link
       rel="canonical"
       href="https://deadkennedyx.github.io/ST_M1CH43L/posts/hide-encryption-signatures-from-analysis.html"
@@ -34,29 +34,29 @@
         <p class="post-meta">29.08.26 / 10 min read</p>
 
         <div class="body-copy">
-          <p>This test is a transparent AES-256-CBC round trip: pad a buffer, encrypt it in place, decrypt it, and recover the original bytes. That is all the cipher context needed for the static-table experiment.</p>
+          <p>Here is the whole test: pad a byte buffer, encrypt it in place with AES-256-CBC, decrypt it, and check that the original bytes come back. That small round trip gives us all the cipher context we need for the static-table experiment.</p>
 
-          <p>Follow along with the source: <a href="https://github.com/DeadKennedyx/hidden-tiny-aes" rel="noreferrer">github.com/DeadKennedyx/hidden-tiny-aes</a></p>
+          <p>The complete source is here if you want to follow along: <a href="https://github.com/DeadKennedyx/hidden-tiny-aes" rel="noreferrer">github.com/DeadKennedyx/hidden-tiny-aes</a></p>
 
           <h2>AES-256-CBC, briefly</h2>
 
-          <p>AES-256 names the 32-byte key size; the block is always 16 bytes. This build uses 14 rounds and a 240-byte expanded key schedule:</p>
+          <p>AES-256 refers to the 32-byte key. The block size stays fixed at 16 bytes. With that key size, this build runs 14 rounds and produces a 240-byte expanded key schedule:</p>
 
           <pre><code>#define AES256 1
 #define AES_BLOCKLEN 16
 #define AES_KEYLEN 32
 #define AES_keyExpSize 240</code></pre>
 
-          <p>CBC accepts only complete blocks, so PKCS#7 appends <code>n</code> bytes whose value is <code>n</code>. It then XORs the first plaintext block with the IV and each later block with the previous ciphertext block:</p>
+          <p>CBC works on complete blocks, so PKCS#7 fills the final block by appending <code>n</code> bytes whose value is also <code>n</code>. The first plaintext block is XORed with the IV. Every block after that is XORed with the previous ciphertext block:</p>
 
           <pre class="equation"><code>C[0] = AES(key, P[0] XOR IV)
 C[i] = AES(key, P[i] XOR C[i - 1])</code></pre>
 
-          <p>The 16-byte IV must be unpredictable and fresh for each encryption under a key; it can be stored beside the ciphertext.</p>
+          <p>The IV is 16 bytes too. It must be fresh and unpredictable for every encryption under the same key, and it can be stored beside the ciphertext.</p>
 
           <h2>Why the S-box appears in the binary</h2>
 
-          <p>AES represents each block as a 4×4 byte state. Stripped to the relevant operations, AES-256 applies an initial round key, thirteen full rounds, and a final round without <code>MixColumns</code>:</p>
+          <p>AES arranges each block as a 4 x 4 byte state. For our purposes, the flow is simple: AES-256 applies an initial round key, runs thirteen full rounds, then finishes with a round that leaves out <code>MixColumns</code>.</p>
 
           <pre><code>AddRoundKey(0, state, RoundKey);
 
@@ -71,33 +71,33 @@ SubBytes(state);
 ShiftRows(state);
 AddRoundKey(Nr, state, RoundKey);</code></pre>
 
-          <p><code>SubBytes</code> is the nonlinear step and indexes a fixed 256-byte S-box; decryption indexes its inverse. <code>ShiftRows</code> permutes bytes, <code>MixColumns</code> diffuses each column in GF(2<sup>8</sup>), and <code>AddRoundKey</code> XORs the expanded key. Those compiled lookup tables are the recognizable signatures this experiment changes, so a deeper AES walkthrough is unnecessary here.</p>
+          <p><code>SubBytes</code> is the nonlinear step. It reads from a fixed 256-byte S-box, while decryption reads from the inverse table. <code>ShiftRows</code> moves bytes around, <code>MixColumns</code> diffuses each column in GF(2<sup>8</sup>), and <code>AddRoundKey</code> XORs in the expanded key. Those compiled lookup tables are the recognizable patterns I want to change, so we do not need a deeper AES walkthrough here.</p>
 
           <h2>Why tiny-AES instead of BCrypt</h2>
 
-          <p>Using tiny-AES means the cipher is compiled into the program. There is no <code>bcrypt.dll</code> import for this path, no provider setup, and no external crypto API to wrap. The source is small enough to step through, it works outside Windows, and unused modes can be disabled at compile time.</p>
+          <p>With tiny-AES, the cipher is compiled directly into the program. This path has no <code>bcrypt.dll</code> import, no provider setup, and no external crypto API to wrap. The source is small enough to step through, works outside Windows, and lets me disable unused modes at compile time.</p>
 
-          <p>Import-based analysis tools sometimes treat crypto API calls as one signal among many. Removing that import changes the dependency and telemetry profile, but it does not make the operation invisible. AES lookup tables, key-schedule logic, high-entropy output, and the surrounding behavior are all observable. I see the benefit as control over a small dependency, not a way around analysis.</p>
+          <p>Some analysis tools treat crypto API imports as one clue among many. Removing that import changes the dependency and telemetry profile, but nothing becomes invisible. The AES tables, key schedule, high-entropy output, and surrounding behavior can all be observed. For me, the real benefit is control over a small dependency.</p>
 
-          <p>That control also creates an opportunity to hide other static signals: recognizable components such as the S-box tables can be encoded on disk and reconstructed at runtime, reducing the signatures that fingerprint an encryption program.</p>
+          <p>That control also opens the door to a useful experiment. Recognizable components such as the S-box tables can be encoded on disk and rebuilt at runtime, which removes byte patterns commonly used to fingerprint an encryption program.</p>
 
           <h2>Engineering the table-encoding experiment</h2>
 
-          <p>The first PE-bear inspection established a baseline. The normal tiny-AES build stored the forward S-box as 256 literal bytes in <code>.rdata</code>, beginning with the familiar sequence <code>63 7C 77 7B F2 6B 6F C5</code>. Searching the file for that prefix led directly to the table. The inverse S-box used by decryption had the same property, starting with <code>52 09 6A D5</code>.</p>
+          <p>First, I needed a baseline. PE-bear showed that the normal tiny-AES build stored the forward S-box as 256 literal bytes in <code>.rdata</code>. It begins with the familiar sequence <code>63 7C 77 7B F2 6B 6F C5</code>, and searching for that prefix leads straight to the table. The inverse S-box has the same problem. Its opening bytes are <code>52 09 6A D5</code>.</p>
 
-          <p>The experiment was to change the representation on disk without changing the AES computation. Instead of compiling the standard table bytes into the executable, I would compile an XOR-encoded copy into read-only data, reserve writable storage for the real table, and restore it when the AES context is initialized.</p>
+          <p>The goal was straightforward: change how the tables look on disk without changing the AES computation. Instead of placing the standard bytes in the executable, I compiled an XOR-encoded copy into read-only data. Writable storage holds the real table after the AES context is initialized.</p>
 
           <pre class="equation"><code>encoded byte = AES table byte XOR 0xA7
 runtime byte = encoded byte XOR 0xA7</code></pre>
 
           <h3>01 / Encode constants during compilation</h3>
 
-          <p>I started with two macros near the top of <code>aes.c</code>. <code>ENC_BYTE</code> receives a literal constant, so the compiler evaluates the XOR while building the initializer. For example, <code>ENC_BYTE(0x63)</code> emits <code>C4</code> into the file because <code>63 XOR A7 = C4</code>. It does not emit <code>63</code> and wait until runtime to perform that first operation.</p>
+          <p>I added two macros near the top of <code>aes.c</code>. Because <code>ENC_BYTE</code> receives a literal constant, the compiler evaluates the XOR while building the initializer. For example, <code>ENC_BYTE(0x63)</code> emits <code>C4</code> because <code>63 XOR A7 = C4</code>. The original <code>63</code> byte is never written to the file by that initializer.</p>
 
           <pre><code>#define TABLE_XOR_KEY 0xA7
 #define ENC_BYTE(x) ((uint8_t)((x) ^ TABLE_XOR_KEY))</code></pre>
 
-          <p>The original constant S-box became <code>encoded_sbox</code>, with every one of its 256 values wrapped in the macro. A separate zero-initialized array provides the writable runtime table used by the existing lookup code.</p>
+          <p>The original constant S-box became <code>encoded_sbox</code>, with all 256 values wrapped in the macro. A separate zero-initialized array becomes the writable runtime table used by the existing lookup code.</p>
 
           <pre><code>static const uint8_t encoded_sbox[256] = {
     ENC_BYTE(0x63), ENC_BYTE(0x7c),
@@ -109,11 +109,11 @@ runtime byte = encoded byte XOR 0xA7</code></pre>
 
 static uint8_t sbox[256];</code></pre>
 
-          <p>The encoded array remains constant and normally lands in read-only initialized data. The zero-initialized runtime array needs writable storage and is normally represented as uninitialized data in the image. The exact PE section layout is a linker decision, but the important distinction is that the standard lookup bytes are no longer present in their original form on disk.</p>
+          <p>The encoded array stays constant and normally lands in read-only initialized data. The zero-initialized runtime array needs writable storage, so it is usually represented as uninitialized data in the image. The linker decides the exact PE layout. What matters here is that the standard lookup bytes no longer appear in their original form on disk.</p>
 
           <h3>02 / Apply the same transformation to decryption</h3>
 
-          <p>Changing only the forward table would make encryption work while leaving a second recognizable AES table in the executable. More importantly, this program calls <code>AES_CBC_decrypt_buffer</code>, whose inverse round uses <code>rsbox</code>. I therefore encoded all 256 inverse S-box values and added a writable runtime copy as well.</p>
+          <p>Changing only the forward table would leave a second recognizable AES table in the executable. This round-trip test also calls <code>AES_CBC_decrypt_buffer</code>, whose inverse rounds read from <code>rsbox</code>. I encoded all 256 inverse S-box values and added a writable runtime copy for them too.</p>
 
           <pre><code>#if (defined(CBC) &amp;&amp; CBC == 1) || \
     (defined(ECB) &amp;&amp; ECB == 1)
@@ -126,11 +126,11 @@ static const uint8_t encoded_rsbox[256] = {
 static uint8_t rsbox[256];
 #endif</code></pre>
 
-          <p>I kept tiny-AES's mode guard around the inverse table. A CTR-only build does not need inverse AES rounds, so it should not allocate or reference <code>rsbox</code>.</p>
+          <p>I kept tiny-AES's existing mode guard around the inverse table. A CTR-only build never uses inverse AES rounds, so there is no reason for it to allocate or reference <code>rsbox</code>.</p>
 
           <h3>03 / Restore both tables during initialization</h3>
 
-          <p>The decoder walks both encoded arrays and applies the same XOR key again. XOR is its own inverse, so the second operation reconstructs the exact bytes expected by <code>SubBytes</code> and <code>InvSubBytes</code>.</p>
+          <p>The decoder is small. It walks both encoded arrays and applies the same XOR key again. Since XOR is its own inverse, that second operation rebuilds the exact bytes expected by <code>SubBytes</code> and <code>InvSubBytes</code>.</p>
 
           <pre><code>static void decode_tables(void)
 {
@@ -144,7 +144,7 @@ static uint8_t rsbox[256];
     }
 }</code></pre>
 
-          <p>I call the decoder before key expansion in the public initialization functions. The CBC path used by this test now begins like this:</p>
+          <p>The public initialization functions call the decoder before key expansion. Here is the CBC path used by this test:</p>
 
           <pre><code>void AES_init_ctx_iv(struct AES_ctx* ctx,
                      const uint8_t* key,
@@ -155,19 +155,19 @@ static uint8_t rsbox[256];
     memcpy(ctx-&gt;Iv, iv, AES_BLOCKLEN);
 }</code></pre>
 
-          <p>The non-IV <code>AES_init_ctx</code> path calls the same decoder so both public initialization routes produce a ready table. In this round-trip test, initialization happens once before encryption and again before decryption. Repeating the decode is harmless because every pass writes the same values.</p>
+          <p>The non-IV <code>AES_init_ctx</code> path calls the same decoder, so both public initialization routes leave the tables ready to use. This test initializes once before encryption and again before decryption. Repeating the decode is harmless because each pass writes the same values.</p>
 
           <h3>04 / Verify behavior before inspecting the PE</h3>
 
-          <p>After rebuilding, I ran the full CBC round trip rather than treating a successful compile as proof. The ciphertext was produced, decryption recovered the padded plaintext, PKCS#7 validation succeeded, and the program exited with code zero. A direct byte scan of the rebuilt executable found both encoded prefixes while returning no match for either original S-box prefix.</p>
+          <p>A clean build only proves that the code compiled, so I ran the full CBC round trip next. It produced ciphertext, recovered the padded plaintext, passed PKCS#7 validation, and exited with code zero. I also scanned the rebuilt executable directly. Both encoded prefixes were present, while neither original S-box prefix could be found.</p>
 
-          <pre class="equation"><code>compile → encrypt → decrypt → validate plaintext → inspect executable</code></pre>
+          <pre class="equation"><code>compile -&gt; encrypt -&gt; decrypt -&gt; validate plaintext -&gt; inspect executable</code></pre>
 
-          <p>With the functional behavior preserved, the PE-bear comparison becomes the result of the experiment rather than its premise.</p>
+          <p>At that point the behavior was intact, and the PE-bear comparison could show what had actually changed.</p>
 
           <h2>Static signature, before and after</h2>
 
-          <p>I searched both builds in PE-bear using the standard opening bytes of the AES S-box. In the original build, the sequence is visible directly in the mapped data.</p>
+          <p>I opened both builds in PE-bear and searched for the standard opening bytes of the AES S-box. The original build shows the sequence directly in the mapped data.</p>
 
           <figure class="evidence">
             <img
@@ -180,7 +180,7 @@ static uint8_t rsbox[256];
             <figcaption>01 / Original build: standard S-box sequence found on disk.</figcaption>
           </figure>
 
-          <p>In the changed build, the same byte search returns no match.</p>
+          <p>Run the same search against the changed build and there is no match.</p>
 
           <figure class="evidence">
             <img
@@ -193,13 +193,13 @@ static uint8_t rsbox[256];
             <figcaption>02 / Changed build: the same static sequence is not found.</figcaption>
           </figure>
 
-          <pre class="equation"><code>encoded table on disk → initialization-time decode → writable table in RAM</code></pre>
+          <pre class="equation"><code>encoded table on disk -&gt; initialization-time decode -&gt; writable table in RAM</code></pre>
 
-          <p>This removes one familiar byte signature from the file, not the AES operation itself. After initialization, a debugger can recover the standard table from memory. The decode loop, Rcon values, key schedule, and round behavior remain useful clues during analysis.</p>
+          <p>This removes one familiar byte pattern from the file, not AES itself. Once initialization finishes, a debugger can recover the standard table from memory. The decode loop, Rcon values, key schedule, and round behavior still provide plenty of clues.</p>
 
           <h2>Generate round constants, not a table</h2>
 
-          <p>The next change removes the 11-byte <code>Rcon[]</code> lookup from the file. Key expansion still consumes the same AES round constants in the same order; only their source changes. The current value is advanced as multiplication by <code>{02}</code> in GF(2<sup>8</sup>):</p>
+          <p>Next, I removed the 11-byte <code>Rcon[]</code> lookup from the file. Key expansion still consumes the same AES round constants in the same order. Only their source changes. Each value advances through multiplication by <code>{02}</code> in GF(2<sup>8</sup>):</p>
 
           <pre><code>static uint8_t rcon_next(uint8_t x)
 {
@@ -210,7 +210,7 @@ static uint8_t rsbox[256];
     return (uint8_t)(x &lt;&lt; 1);
 }</code></pre>
 
-          <p><code>KeyExpansion</code> starts with <code>0x01</code>, applies the current constant, and then generates the next one:</p>
+          <p><code>KeyExpansion</code> begins at <code>0x01</code>. It applies that constant, then calculates the next one:</p>
 
           <pre><code>uint8_t rcon = 0x01;
 
@@ -218,7 +218,7 @@ static uint8_t rsbox[256];
 tempa[0] ^= rcon;
 rcon = rcon_next(rcon);</code></pre>
 
-          <p>I built both revisions with the same MSVC x64 Release configuration. A raw-data scan—the same search used in PE-bear—found <code>8D 01 02 04 08 10 20 40 80 1B 36</code> at file offset <code>0x2900</code> in <code>aes_before.exe</code>, inside <code>.rdata + 0x300</code>. The complete sequence is absent from <code>aes_after.exe</code>.</p>
+          <p>I built both revisions with the same MSVC x64 Release configuration. A raw-data scan using the PE-bear search found <code>8D 01 02 04 08 10 20 40 80 1B 36</code> at file offset <code>0x2900</code> in <code>aes_before.exe</code>, inside <code>.rdata + 0x300</code>. That complete sequence is absent from <code>aes_after.exe</code>.</p>
 
           <pre class="equation"><code>check                     before       after
 Rcon sequence             present      absent
@@ -229,11 +229,11 @@ Rcon stored in .rdata     yes          no
 program exit              0            0
 ciphertext                identical    identical</code></pre>
 
-          <p>The raw <code>.rdata</code> allocation remains <code>0x1200</code> bytes because of file alignment. In <code>.text</code>, MSVC replaced the table load with shift, <code>0x1B</code> XOR, high-bit test, and conditional-move instructions; optimization made the section slightly smaller overall. Individual values such as <code>0x1B</code> remain normal. What disappeared is the contiguous Rcon fingerprint, not the AES algorithm.</p>
+          <p>File alignment keeps the raw <code>.rdata</code> allocation at <code>0x1200</code> bytes. In <code>.text</code>, MSVC replaced the table load with shift, <code>0x1B</code> XOR, high-bit test, and conditional-move instructions. Optimization made the section slightly smaller overall. Individual values such as <code>0x1B</code> still appear, which is normal. The contiguous Rcon fingerprint is gone, but the AES algorithm is not.</p>
 
           <h2 id="fully-unroll-the-round-schedule">Fully unroll the round schedule</h2>
 
-          <p>The next change removes the top-level round loops from both directions. The round body is a compile-time macro, and the AES-256 path expands it at every call site. Encryption executes thirteen complete rounds followed by round 14 without <code>MixColumns</code>:</p>
+          <p>Last, I removed the top-level round loops from both directions. A compile-time macro expands the round body at every call site. On the AES-256 path, encryption runs thirteen complete rounds and then round 14 without <code>MixColumns</code>:</p>
 
           <pre><code>#define CIPHER_ROUND(round_index) \
   { \
@@ -259,7 +259,7 @@ CIPHER_ROUND(12);
 CIPHER_ROUND(13);
 CIPHER_FINAL_ROUND(14);</code></pre>
 
-          <p>Decryption is expanded in the opposite order: rounds 13 through 1 each include <code>InvMixColumns</code>, while the final inverse round applies round key 0 without it. There is no round variable, termination test, or scheduler back edge in either function. The smaller byte and column loops inside the individual transformations remain.</p>
+          <p>Decryption expands the same schedule in reverse. Rounds 13 through 1 include <code>InvMixColumns</code>, while the final inverse round applies round key 0 without it. Neither function has a round variable, termination test, or scheduler back edge anymore. The smaller byte and column loops inside each transformation remain.</p>
 
           <pre><code>INV_CIPHER_ROUND(13);
 INV_CIPHER_ROUND(12);
@@ -267,7 +267,7 @@ INV_CIPHER_ROUND(12);
 INV_CIPHER_ROUND(1);
 INV_CIPHER_FINAL_ROUND();</code></pre>
 
-          <p>I rebuilt the looped and fully unrolled revisions with the same MSVC x64 Release configuration. In the original encryption path, the disassembly compared its round counter with <code>0x0E</code>, incremented it, and jumped back to the shared round body. The inverse path similarly decremented its counter and jumped backward. Those two scheduler patterns are absent from the unrolled build; the round bodies and successive key offsets now appear as straight-line code.</p>
+          <p>For a fair comparison, I rebuilt the looped and unrolled revisions with the same MSVC x64 Release configuration. The original encryption path compares its round counter with <code>0x0E</code>, increments it, and jumps back to the shared body. The inverse path decrements its own counter and jumps backward. Neither scheduler pattern appears in the unrolled build. Instead, the disassembly shows straight-line round bodies with successive key offsets.</p>
 
           <pre class="equation"><code>check                         looped       unrolled
 round counter/back edge        present      absent
@@ -277,18 +277,18 @@ program exit                   0            0
 ciphertext                     identical    identical
 decrypted plaintext            identical    identical</code></pre>
 
-          <p>The cost is size: <code>.text</code> grew by 4,880 bytes, or 57.7%, and the complete PE grew by 5,120 bytes, or 30.3%. This removes the compact round-loop shape and its branch overhead, but it does not conceal AES. Repeated round bodies and fixed round-key offsets give an analyst a different—and in places more explicit—view of the same algorithm.</p>
+          <p>The tradeoff is size. The <code>.text</code> section grew by 4,880 bytes, or 57.7%, and the complete PE grew by 5,120 bytes, or 30.3%. Removing the compact loop also removes its branch overhead, but it does not conceal AES. Repeated round bodies and fixed key offsets give an analyst a different view of the algorithm, and sometimes a clearer one.</p>
 
           <h2>Conclusion</h2>
 
-          <p>Encoding the S-boxes, generating Rcon at runtime, and fully unrolling the rounds removed several recognizable on-disk patterns without changing the AES result. That defeats those exact byte and loop-shape searches, not detection itself: advanced static and dynamic analysis can still recover the runtime tables and recognize the key schedule, round transformations, and overall data flow.</p>
+          <p>Encoding the S-boxes, generating Rcon at runtime, and fully unrolling the rounds removed several recognizable patterns from the file without changing the AES result. Those exact byte and loop-shape searches no longer work. That does not mean the binary is undetectable. Static and dynamic analysis can still recover the runtime tables and recognize the key schedule, round transformations, and overall data flow.</p>
 
-          <p>Part 2 will examine the next layer from an analysis and defensive-engineering perspective: control-flow flattening and mixed Boolean-arithmetic transformations that reshape a program's graph and expressions, plus white-box cryptography, which attempts to protect keys even when execution and memory are observable. The focus will be what each technique changes, what remains visible, and its cost in performance, maintainability, and key protection—because none of them is a guarantee of invisibility.</p>
+          <p>Part 2 will pick up from here. I will look at control-flow flattening and mixed Boolean-arithmetic, two compiler-level transformations that reshape a program's graph and expressions. I will also explore white-box cryptography, which tries to protect keys even when someone can observe execution and memory. The interesting part is not just what these techniques change, but what they leave visible and what they cost in speed, maintainability, and key protection. None of them guarantees invisibility.</p>
 
           <div class="sources">
             <p>// references</p>
-            <p><a href="https://csrc.nist.gov/pubs/fips/197/final" rel="noreferrer">NIST FIPS 197 — Advanced Encryption Standard</a></p>
-            <p><a href="https://csrc.nist.gov/pubs/sp/800/38/a/final" rel="noreferrer">NIST SP 800-38A — Block cipher modes</a></p>
+            <p><a href="https://csrc.nist.gov/pubs/fips/197/final" rel="noreferrer">NIST FIPS 197: Advanced Encryption Standard</a></p>
+            <p><a href="https://csrc.nist.gov/pubs/sp/800/38/a/final" rel="noreferrer">NIST SP 800-38A: Block cipher modes</a></p>
             <p><a href="https://github.com/kokke/tiny-AES-C" rel="noreferrer">tiny-AES-c source and documentation</a></p>
           </div>
         </div>
