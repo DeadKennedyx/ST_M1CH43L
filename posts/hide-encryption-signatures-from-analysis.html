@@ -38,7 +38,7 @@
 
           <p>Part 1 targets three obvious signatures in tiny-AES. First, I XOR-encode the forward and inverse S-boxes, then replace them with tableless runtime calculation so the complete tables no longer exist as data. Next, I generate the Rcon values during key expansion instead of storing their sequence in the PE. Finally, I fully unroll the encryption and decryption schedules to remove the round-counter loops. After each change, I compare the MSVC x64 Release builds and look at which byte patterns, data objects, and control-flow shapes disappeared or moved.</p>
 
-          <p>Part 2 will move from those AES-specific changes into broader code-transformation techniques. I will experiment with control-flow flattening, mixed Boolean-arithmetic, and white-box cryptography, then examine how each one changes the analyst's path through the program. The objective across both parts is not to claim that AES becomes invisible, but to understand how analysis shifts when its easiest static anchors are removed.</p>
+          <p><a href="hide-encryption-signatures-from-analysis-part-2.html">Part 2</a> moves from those AES-specific changes into mixed Boolean-arithmetic, fixed Boolean circuits, and fused round operations, then examines how each one changes the analyst's path through the program. The objective across both parts is not to claim that AES becomes invisible, but to understand how analysis shifts when its easiest static anchors are removed.</p>
 
           <p>The complete source is here if you want to follow along: <a href="https://github.com/DeadKennedyx/hidden-tiny-aes" rel="noreferrer">github.com/DeadKennedyx/hidden-tiny-aes</a></p>
 
@@ -304,7 +304,7 @@ decrypted plaintext            identical    identical</code></pre>
 
           <p>Encoding and then eliminating the S-box tables, generating Rcon at runtime, and fully unrolling the rounds removed several recognizable patterns from the file without changing the AES result. The final algebraic revision is more effective for this narrow table-signature goal because there is no complete S-box to decode or dump, but the improvement is specific to representation. Static and dynamic analysis can still recognize the runtime substitution logic, key schedule, round transformations, and overall data flow.</p>
 
-          <p>Part 2 will pick up from here. I will look at control-flow flattening and mixed Boolean-arithmetic, two compiler-level transformations that reshape a program's graph and expressions. I will also explore white-box cryptography, which tries to protect keys even when someone can observe execution and memory.</p>
+          <p><a href="hide-encryption-signatures-from-analysis-part-2.html">Part 2 picks up from here</a> with runtime mixed Boolean-arithmetic, a bitsliced XOR/AND S-box circuit, and fused round operations. It measures which residual constants and function boundaries disappear while keeping the limits of those representation changes explicit.</p>
 
           <div class="sources">
             <p>// references</p>
