@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="A tiny-AES experiment that encodes S-box tables, generates Rcon during key expansion, fully unrolls AES rounds, and compares the PE changes."
+      content="A tiny-AES reverse-engineering experiment that moves from encoded S-box tables to algebraic GF(2^8) calculation, generates Rcon, unrolls AES rounds, and compares the PE changes."
     />
     <meta name="theme-color" content="#050505" />
     <title>Hide encryption signatures from analysis - ST_M1CH43L</title>
@@ -31,7 +31,7 @@
       <article>
         <p class="kicker">// transmission 001</p>
         <h1>Hide encryption signatures from analysis</h1>
-        <p class="post-meta">29.08.26 / 10 min read</p>
+        <p class="post-meta">29.08.26 / 15 min read</p>
 
         <div class="body-copy">
           <p>Here is the whole test: pad a byte buffer, encrypt it in place with AES-256-CBC, decrypt it, and check that the original bytes come back. That small round trip gives us all the cipher context we need for the static-table experiment.</p>
@@ -279,9 +279,148 @@ decrypted plaintext            identical    identical</code></pre>
 
           <p>The tradeoff is size. The <code>.text</code> section grew by 4,880 bytes, or 57.7%, and the complete PE grew by 5,120 bytes, or 30.3%. Removing the compact loop also removes its branch overhead, but it does not conceal AES. Repeated round bodies and fixed key offsets give an analyst a different view of the algorithm, and sometimes a clearer one.</p>
 
+          <h2 id="tableless-runtime-calculation">Tableless runtime calculation (algebraic AES)</h2>
+
+          <p>The XOR-encoded S-boxes were a useful first step, but they only displaced the tables. Looking at that build as an analyst instead of its author, the recovery path is almost self-documenting: the PE contains two 256-byte encoded permutations, initialization walks both arrays for exactly 256 iterations, and a single-byte constant transforms them into two writable lookup tables.</p>
+
+          <pre class="equation"><code>encoded_sbox[256] --XOR 0xA7--&gt; sbox[256] --indexed lookup--&gt; output byte
+encoded_rsbox[256] --XOR 0xA7--&gt; rsbox[256] --indexed lookup--&gt; output byte</code></pre>
+
+          <p>An analyst does not need to guess the encoding. The decoder exposes <code>0xA7</code>, and a breakpoint after <code>decode_tables</code> reveals both standard tables in memory. Even without running the program, applying each possible one-byte XOR to a 256-byte permutation is cheap. The encoding defeats one exact byte search; it does not remove the table-shaped evidence.</p>
+
+          <p>The next revision removes <code>encoded_sbox</code>, <code>encoded_rsbox</code>, <code>sbox</code>, <code>rsbox</code>, and <code>decode_tables</code> altogether. It never materializes a complete S-box. Instead, it calculates only the substitution currently requested by the key schedule or round function. This is not a different cipher or a new S-box; it evaluates the algebra that defines the standard AES table.</p>
+
+          <h3>01 / Multiply bytes in GF(2^8)</h3>
+
+          <p>The calculation starts with multiplication in Rijndael's finite field. AES treats a byte as a polynomial and reduces products modulo <code>x^8 + x^4 + x^3 + x + 1</code>, represented as <code>0x11B</code>. Once the overflowing <code>x^8</code> bit is discarded, the reduction value that fits in a byte is <code>0x1B</code>:</p>
+
+          <pre><code>static uint8_t gf_mul(uint8_t a, uint8_t b)
+{
+    uint8_t result = 0;
+
+    for (int i = 0; i &lt; 8; i++) {
+        if (b &amp; 1)
+            result ^= a;
+
+        if (a &amp; 0x80)
+            a = (uint8_t)((a &lt;&lt; 1) ^ 0x1B);
+        else
+            a = (uint8_t)(a &lt;&lt; 1);
+
+        b &gt;&gt;= 1;
+    }
+
+    return result;
+}</code></pre>
+
+          <p>Each pass consumes one bit of <code>b</code>. A set bit XORs the current multiple of <code>a</code> into the result. Shifting <code>a</code> left multiplies it by <code>x</code>; when its high bit was set, XOR with <code>0x1B</code> performs the modular reduction. After eight passes, the function has multiplied two field elements without a multiplication table.</p>
+
+          <h3>02 / Calculate the multiplicative inverse</h3>
+
+          <p>The nonlinear core of the S-box is the multiplicative inverse. The 255 nonzero elements of GF(2<sup>8</sup>) form a multiplicative group, so a nonzero byte raised to <code>254</code> is its inverse. <code>gf_pow</code> evaluates that exponent with square-and-multiply:</p>
+
+          <pre><code>static uint8_t gf_pow(uint8_t base, uint8_t exponent)
+{
+    uint8_t result = 1;
+
+    while (exponent) {
+        if (exponent &amp; 1)
+            result = gf_mul(result, base);
+
+        base = gf_mul(base, base);
+        exponent &gt;&gt;= 1;
+    }
+
+    return result;
+}
+
+static uint8_t gf_inv(uint8_t x)
+{
+    if (x == 0)
+        return 0;
+
+    return gf_pow(x, 254);
+}</code></pre>
+
+          <p>Zero has no multiplicative inverse, but the AES construction maps it to zero before the affine step. For every other input, <code>x^254</code> produces the same multiplicative inverse used to construct the conventional S-box. With the fixed exponent <code>0xFE</code>, this implementation performs eight squarings and seven additional field multiplications per inverse.</p>
+
+          <h3>03 / Apply the affine transformation</h3>
+
+          <p>Inversion alone is not the AES S-box. Encryption XORs the inverse with four rotated copies of itself and the constant <code>0x63</code>. That is the standard affine bit transformation written compactly with byte rotations:</p>
+
+          <pre><code>static uint8_t rotl8(uint8_t x, unsigned int shift)
+{
+    return (uint8_t)(
+        (x &lt;&lt; shift) |
+        (x &gt;&gt; (8 - shift))
+    );
+}
+
+static uint8_t getSBoxValue(uint8_t x)
+{
+    uint8_t y = gf_inv(x);
+
+    return (uint8_t)(
+        y ^
+        rotl8(y, 1) ^
+        rotl8(y, 2) ^
+        rotl8(y, 3) ^
+        rotl8(y, 4) ^
+        0x63
+    );
+}</code></pre>
+
+          <p>The zero case is a quick sanity check: <code>gf_inv(0x00)</code> returns <code>0x00</code>, every rotation stays zero, and the affine constant produces <code>SBOX(0x00) = 0x63</code>. Another familiar entry is <code>0x53 -&gt; 0xCA -&gt; 0xED</code>: field inversion produces <code>0xCA</code>, then the affine layer produces the standard S-box result <code>0xED</code>.</p>
+
+          <p>Decryption reverses those operations. It first applies the inverse affine transformation with rotations and <code>0x05</code>, then calculates another field inverse:</p>
+
+          <pre><code>static uint8_t getSBoxInvert(uint8_t x)
+{
+    uint8_t y = (uint8_t)(
+        rotl8(x, 1) ^
+        rotl8(x, 3) ^
+        rotl8(x, 6) ^
+        0x05
+    );
+
+    return gf_inv(y);
+}</code></pre>
+
+          <h3>04 / Replace lookups without changing the rounds</h3>
+
+          <p>The surrounding AES code does not need to know whether a substitution came from memory or arithmetic. <code>SubBytes</code>, <code>InvSubBytes</code>, and <code>SubWord</code> keep the same call sites; only <code>getSBoxValue</code> and <code>getSBoxInvert</code> changed from array expressions into functions:</p>
+
+          <pre><code>/* encryption rounds and key expansion */
+(*state)[j][i] = getSBoxValue((*state)[j][i]);
+
+/* decryption rounds */
+(*state)[j][i] = getSBoxInvert((*state)[j][i]);</code></pre>
+
+          <p>That detail matters. Calculating only the forward substitution during encryption would still leave the inverse table in a CBC-capable binary, and changing only the round function would leave table access in AES-256 key expansion. This version routes every forward and inverse substitution through the algebraic path.</p>
+
+          <h3>What changed from an analyst's view</h3>
+
+          <p>In the previous build, hiding the canonical prefix did not hide the object that behaved like an S-box. There was still a 256-byte base address followed by data-dependent indexing, plus a decoded copy that could be dumped from RAM. In the algebraic build, those memory artifacts disappear. A static analyst now sees shifts, XORs, rotations, and calls into finite-field multiplication instead of <code>table[input]</code>.</p>
+
+          <pre class="equation"><code>artifact                         XOR-encoded build    algebraic build
+canonical S-box arrays on disk   no                   no
+XOR-encoded 256-byte tables      yes                  no
+decoded S-boxes in writable RAM  yes                  no
+S-box base-plus-index loads      yes                  no
+AES-specific arithmetic clues   yes                  yes
+dynamic recovery of behavior    easy                 still possible</code></pre>
+
+          <p>This is the real improvement: the algebraic version removes the complete forward and inverse permutations from both the PE image and steady-state memory. A scanner that knows the normal S-box, or its bytewise-XOR variant, loses that fixed data anchor. The analyst has to recognize the computation, emulate it, or collect all 256 input/output pairs dynamically.</p>
+
+          <p>It is still recognizable AES. In the current MSVC x64 Release disassembly, <code>0x1B</code> appears in the reduction path, <code>0xFE</code> initializes the inversion exponent, and the rotate/XOR sequence ends in <code>0x63</code>. Those constants, the key expansion, and fourteen unrolled rounds give a reverse engineer strong semantic clues. Algebraic calculation raises the cost of a narrow table-signature search; it does not make the cipher or key invisible.</p>
+
+          <p>The price is runtime. A decoded table needs one indexed load per substitution. The nonzero path in this implementation calculates an inverse with fifteen calls to <code>gf_mul</code>, and each multiplication walks eight bits. That work repeats for every byte touched by <code>SubBytes</code>, <code>InvSubBytes</code>, and <code>SubWord</code>. The design favors binary layout and analysis resistance over throughput.</p>
+
+          <p>Tableless also does not mean constant-time. The zero check and the branches on <code>b &amp; 1</code> and <code>a &amp; 0x80</code> operate on intermediate field values; a compiler may lower some of them to conditional moves, but the C source makes no timing guarantee. Removing secret-indexed S-box loads changes one cache-analysis surface, yet this experiment should not be presented as a side-channel-hardened or production cryptographic implementation.</p>
+
           <h2>Conclusion</h2>
 
-          <p>Encoding the S-boxes, generating Rcon at runtime, and fully unrolling the rounds removed several recognizable patterns from the file without changing the AES result. Those exact byte and loop-shape searches no longer work. That does not mean the binary is undetectable. Static and dynamic analysis can still recover the runtime tables and recognize the key schedule, round transformations, and overall data flow.</p>
+          <p>Encoding and then eliminating the S-box tables, generating Rcon at runtime, and fully unrolling the rounds removed several recognizable patterns from the file without changing the AES result. The final algebraic revision is more effective for this narrow table-signature goal because there is no complete S-box to decode or dump, but the improvement is specific to representation. Static and dynamic analysis can still recognize the finite-field arithmetic, key schedule, round transformations, and overall data flow.</p>
 
           <p>Part 2 will pick up from here. I will look at control-flow flattening and mixed Boolean-arithmetic, two compiler-level transformations that reshape a program's graph and expressions. I will also explore white-box cryptography, which tries to protect keys even when someone can observe execution and memory.</p>
 
