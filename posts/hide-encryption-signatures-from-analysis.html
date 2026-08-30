@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="A tiny-AES experiment that encodes S-box tables, generates Rcon during key expansion, and verifies both PE signature changes."
+      content="A tiny-AES experiment that encodes S-box tables, generates Rcon during key expansion, fully unrolls AES rounds, and compares the PE changes."
     />
     <meta name="theme-color" content="#050505" />
     <title>Hide encryption signatures from analysis — ST_M1CH43L</title>
@@ -31,7 +31,7 @@
       <article>
         <p class="kicker">// transmission 001</p>
         <h1>Hide encryption signatures from analysis</h1>
-        <p class="post-meta">29.08.26 / 8 min read</p>
+        <p class="post-meta">29.08.26 / 10 min read</p>
 
         <div class="body-copy">
           <p>This test is a transparent AES-256-CBC round trip: pad a buffer, encrypt it in place, decrypt it, and recover the original bytes. That is all the cipher context needed for the static-table experiment.</p>
@@ -230,6 +230,54 @@ program exit              0            0
 ciphertext                identical    identical</code></pre>
 
           <p>The raw <code>.rdata</code> allocation remains <code>0x1200</code> bytes because of file alignment. In <code>.text</code>, MSVC replaced the table load with shift, <code>0x1B</code> XOR, high-bit test, and conditional-move instructions; optimization made the section slightly smaller overall. Individual values such as <code>0x1B</code> remain normal. What disappeared is the contiguous Rcon fingerprint, not the AES algorithm.</p>
+
+          <h2 id="fully-unroll-the-round-schedule">Fully unroll the round schedule</h2>
+
+          <p>The next change removes the top-level round loops from both directions. The round body is a compile-time macro, and the AES-256 path expands it at every call site. Encryption executes thirteen complete rounds followed by round 14 without <code>MixColumns</code>:</p>
+
+          <pre><code>#define CIPHER_ROUND(round_index) \
+  { \
+    SubBytes(state); \
+    ShiftRows(state); \
+    MixColumns(state); \
+    AddRoundKey(round_index, state, RoundKey); \
+  }
+
+/* AES-256 expansion */
+CIPHER_ROUND(1);
+CIPHER_ROUND(2);
+CIPHER_ROUND(3);
+CIPHER_ROUND(4);
+CIPHER_ROUND(5);
+CIPHER_ROUND(6);
+CIPHER_ROUND(7);
+CIPHER_ROUND(8);
+CIPHER_ROUND(9);
+CIPHER_ROUND(10);
+CIPHER_ROUND(11);
+CIPHER_ROUND(12);
+CIPHER_ROUND(13);
+CIPHER_FINAL_ROUND(14);</code></pre>
+
+          <p>Decryption is expanded in the opposite order: rounds 13 through 1 each include <code>InvMixColumns</code>, while the final inverse round applies round key 0 without it. There is no round variable, termination test, or scheduler back edge in either function. The smaller byte and column loops inside the individual transformations remain.</p>
+
+          <pre><code>INV_CIPHER_ROUND(13);
+INV_CIPHER_ROUND(12);
+/* ...rounds 11 through 2... */
+INV_CIPHER_ROUND(1);
+INV_CIPHER_FINAL_ROUND();</code></pre>
+
+          <p>I rebuilt the looped and fully unrolled revisions with the same MSVC x64 Release configuration. In the original encryption path, the disassembly compared its round counter with <code>0x0E</code>, incremented it, and jumped back to the shared round body. The inverse path similarly decremented its counter and jumped backward. Those two scheduler patterns are absent from the unrolled build; the round bodies and successive key offsets now appear as straight-line code.</p>
+
+          <pre class="equation"><code>check                         looped       unrolled
+round counter/back edge        present      absent
+.text virtual size             0x2108       0x3418
+PE file size                   16,896       22,016
+program exit                   0            0
+ciphertext                     identical    identical
+decrypted plaintext            identical    identical</code></pre>
+
+          <p>The cost is size: <code>.text</code> grew by 4,880 bytes, or 57.7%, and the complete PE grew by 5,120 bytes, or 30.3%. This removes the compact round-loop shape and its branch overhead, but it does not conceal AES. Repeated round bodies and fixed round-key offsets give an analyst a different—and in places more explicit—view of the same algorithm.</p>
 
           <div class="sources">
             <p>// references</p>
