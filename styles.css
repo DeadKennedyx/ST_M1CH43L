@@ -40,9 +40,9 @@ a {
     linear-gradient(90deg, var(--black) 0%, rgba(5, 5, 5, 0.94) 25%, transparent 72%),
     linear-gradient(0deg, rgba(5, 5, 5, 0.12), rgba(5, 5, 5, 0.12)),
     url("assets/st-michael.png");
-  background-position: center, center, center bottom;
+  background-position: center, center, right bottom;
   background-repeat: no-repeat;
-  background-size: cover;
+  background-size: cover, cover, contain;
   filter: contrast(1.04);
 }
 
@@ -303,8 +303,8 @@ a {
       linear-gradient(90deg, var(--black) 0%, rgba(5, 5, 5, 0.76) 70%, rgba(5, 5, 5, 0.14)),
       linear-gradient(0deg, rgba(5, 5, 5, 0.22), rgba(5, 5, 5, 0.22)),
       url("assets/st-michael.png");
-    background-position: center, center, 67% bottom;
-    background-size: cover;
+    background-position: center, center, right bottom;
+    background-size: cover, cover, contain;
   }
 
   .shell {
@@ -323,7 +323,8 @@ a {
       linear-gradient(90deg, var(--black) 0%, rgba(5, 5, 5, 0.9) 58%, rgba(5, 5, 5, 0.35)),
       linear-gradient(0deg, var(--black) 0%, transparent 45%, rgba(5, 5, 5, 0.5) 100%),
       url("assets/st-michael.png");
-    background-position: center, center, 64% bottom;
+    background-position: center, center, right bottom;
+    background-size: cover, cover, contain;
   }
 
   .shell {
