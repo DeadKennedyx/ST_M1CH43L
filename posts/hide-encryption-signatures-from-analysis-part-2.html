@@ -31,7 +31,7 @@
       <article>
         <p class="kicker">// transmission 002</p>
         <h1>Hide encryption signatures from analysis - Part 2</h1>
-        <p class="post-meta">30.08.26 / 18 min read</p>
+        <p class="post-meta">30.08.26 / 16 min read</p>
 
         <div class="body-copy">
           <p><a href="hide-encryption-signatures-from-analysis.html">Part 1</a> removed the static forward and inverse S-box tables, generated Rcon during key expansion, and expanded the round schedule without a loop. That changed several easy file signatures, but the tableless S-box introduced a new set of readable algebraic clues: exponentiation by 254, a generic GF(2<sup>8</sup>) multiplier, four byte rotations, and the affine constant <code>0x63</code>. The field-doubling paths also loaded <code>0x1B</code> directly.</p>
@@ -389,11 +389,11 @@ mandiant/capa-rules       801a792c60fb2c8ef79e1b5d61d7e3d2cab4d405</code></pre>
 
           <p>Ghidra did recognize the Part 1 construction and AES-NI instruction control, so the backend was operating. It nevertheless missed both table-based positive controls. I therefore do not count its Part 2 zero as independent confirmation of table-signature evasion; it is a backend-specific blind spot that should be visible in the result rather than averaged away.</p>
 
-          <h3>Correctness and timing checks</h3>
+          <h3>Correctness checks</h3>
 
           <p>Static evasion is irrelevant if the implementation stops being AES. The deterministic regression suite and an OpenSSL 3.6.3 differential harness produced the following results:</p>
 
-          <section class="comparison-wrap" aria-label="AES correctness and timing results" tabindex="0">
+          <section class="comparison-wrap" aria-label="AES correctness results" tabindex="0">
             <table class="comparison-table">
               <thead>
                 <tr>
@@ -437,17 +437,7 @@ mandiant/capa-rules       801a792c60fb2c8ef79e1b5d61d7e3d2cab4d405</code></pre>
             </table>
           </section>
 
-          <p>I also ran a native Apple arm64 port of dudect commit <code>dc269651fb2567e46755cfb2a13d3875592968b5</code>, replacing its x86 cycle counter with <code>mach_continuous_time()</code>. The fixed-versus-random plaintext test keeps key expansion outside the measured region. Part 1 crossed dudect's leakage threshold in all three <code>-O2</code> runs after 40,000, 50,000, and 40,000 measurements. Part 2 completed two million measurements in each of three runs at each of <code>-O0</code>, <code>-O2</code>, <code>-Os</code>, and LTO: 24 million Part 2 measurements in total with no leakage evidence. The stock table implementation also completed its three <code>-O2</code> runs without a threshold crossing.</p>
-
-          <p>That last stock result is a useful warning: dudect is an empirical leakage detector, not a proof that code is constant-time. A small lookup table can remain hot in a particular cache during this experiment. Part 2's result supports the branchless Boolean design on this machine and compiler set; it does not establish constant-time behavior on every processor, compiler, or calling context.</p>
-
-          <h3>Residual clues and final verdict</h3>
-
-          <p>Part 2 is not a clue-free binary. The literal <code>tiny-AES</code> remains in all seven Windows builds, and the complete demonstration key remains contiguous in six of seven. The direct S-box and inverse-S-box byte prefixes are absent in all seven. No Part 2 x86 disassembly contains a scalar <code>0x1B</code> or <code>0x63</code> immediate. Clang <code>-Os</code> does emit six <code>0xFE</code> immediates, but each is a <code>pshuflw</code> shuffle-control operand generated during vectorization, not the old exponentiation loop. Numeric-byte searches therefore need instruction context.</p>
-
-          <p>There was also unrelated scanner noise: crypto-detection labeled code in Part 1 GCC <code>-O0</code>, Part 2 GCC <code>-O0</code>, and Part 2 Clang <code>-O2</code> as Base64 bytecode. Those are non-AES false positives. The precise statement is consequently “zero AES-specific matches,” not “zero scanner output.”</p>
-
-          <p><strong>Part 2 successfully bypassed every AES-specific signature exercised by the three public YARA packs and capa/Vivisect across this seven-profile Windows build matrix.</strong> It also preserved AES behavior and avoided the timing leak that the same harness repeatedly exposed in Part 1. It did not make AES semantically invisible. A known BearSSL bitslice control is missed by the same rules, capa's result changes with its extraction backend, no MSVC artifact was tested, and a future rule can target the Boolean circuit, the expanded key schedule, CBC data flow, or runtime behavior. The defensible conclusion is that Part 2 removed this detector set's existing static anchors—not that analysis can no longer identify AES.</p>
+          <p><strong>Part 2 successfully bypassed every AES-specific signature exercised by the three public YARA packs and capa/Vivisect across this seven-profile Windows build matrix.</strong> It also preserved AES behavior. It did not make AES semantically invisible. A known BearSSL bitslice control is missed by the same rules, capa's result changes with its extraction backend, no MSVC artifact was tested, and a future rule can target the Boolean circuit, the expanded key schedule, CBC data flow, or runtime behavior. The defensible conclusion is that Part 2 removed this detector set's existing static anchors—not that analysis can no longer identify AES.</p>
 
           <div class="sources">
             <p>// references</p>
@@ -462,7 +452,6 @@ mandiant/capa-rules       801a792c60fb2c8ef79e1b5d61d7e3d2cab4d405</code></pre>
             <p><a href="https://github.com/mandiant/capa" rel="noreferrer">Mandiant capa capability detector</a></p>
             <p><a href="https://github.com/mandiant/capa-rules" rel="noreferrer">Mandiant capa rules</a></p>
             <p><a href="https://github.com/NationalSecurityAgency/ghidra" rel="noreferrer">NSA Ghidra software reverse-engineering framework</a></p>
-            <p><a href="https://github.com/oreparaz/dudect" rel="noreferrer">dudect statistical timing-leakage detector</a></p>
           </div>
         </div>
 
