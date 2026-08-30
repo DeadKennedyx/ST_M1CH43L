@@ -40,12 +40,6 @@
 
           <p>The source for the experiment lives at <a href="https://github.com/DeadKennedyx/hidden-tiny-aes" rel="noreferrer">github.com/DeadKennedyx/hidden-tiny-aes</a>.</p>
 
-          <h2>Focus on the deployed executable</h2>
-
-          <p>The repository is not the artifact an analyst normally receives. C comments, macro names, and most private identifiers do not automatically become part of a normal MSVC Release PE. Without the PDB, a debugger still has machine code, constants, imports, strings, addresses, and runtime values, but not the original source-level explanation.</p>
-
-          <p>That distinction matters throughout this experiment. Removing a literal or a function name from C is not evidence by itself. The claim has to be checked against the final optimized executable produced by the deployment toolchain. It also needs a narrow definition: defeating one immediate-value search is different from preventing semantic recognition of AES.</p>
-
           <h2>Construct the reduction term at runtime</h2>
 
           <p>Part 1's finite-field doubling paths contained a direct reduction:</p>
