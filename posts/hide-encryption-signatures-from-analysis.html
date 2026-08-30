@@ -34,7 +34,11 @@
         <p class="post-meta">29.08.26 / 12 min read</p>
 
         <div class="body-copy">
-          <p>Here is the whole test: pad a byte buffer, encrypt it in place with AES-256-CBC, decrypt it, and check that the original bytes come back. That small round trip gives us all the cipher context we need for the static-table experiment.</p>
+          <p>This two-part experiment starts with a recognizable AES-256-CBC implementation and asks how changing its representation changes what an analyst sees. The test stays deliberately small: pad a byte buffer, encrypt it, decrypt it, and verify that the original bytes return. Keeping that behavior fixed gives us a clean baseline while the executable changes around it.</p>
+
+          <p>Part 1 targets three obvious signatures in tiny-AES. First, I XOR-encode the forward and inverse S-boxes, then replace them with tableless runtime calculation so the complete tables no longer exist as data. Next, I generate the Rcon values during key expansion instead of storing their sequence in the PE. Finally, I fully unroll the encryption and decryption schedules to remove the round-counter loops. After each change, I compare the MSVC x64 Release builds and look at which byte patterns, data objects, and control-flow shapes disappeared or moved.</p>
+
+          <p>Part 2 will move from those AES-specific changes into broader code-transformation techniques. I will experiment with control-flow flattening, mixed Boolean-arithmetic, and white-box cryptography, then examine how each one changes the analyst's path through the program. The objective across both parts is not to claim that AES becomes invisible, but to understand how analysis shifts when its easiest static anchors are removed.</p>
 
           <p>The complete source is here if you want to follow along: <a href="https://github.com/DeadKennedyx/hidden-tiny-aes" rel="noreferrer">github.com/DeadKennedyx/hidden-tiny-aes</a></p>
 
