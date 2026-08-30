@@ -283,7 +283,7 @@ decrypted plaintext            identical    identical</code></pre>
 
           <p>Encoding the S-boxes, generating Rcon at runtime, and fully unrolling the rounds removed several recognizable patterns from the file without changing the AES result. Those exact byte and loop-shape searches no longer work. That does not mean the binary is undetectable. Static and dynamic analysis can still recover the runtime tables and recognize the key schedule, round transformations, and overall data flow.</p>
 
-          <p>Part 2 will pick up from here. I will look at control-flow flattening and mixed Boolean-arithmetic, two compiler-level transformations that reshape a program's graph and expressions. I will also explore white-box cryptography, which tries to protect keys even when someone can observe execution and memory. The interesting part is not just what these techniques change, but what they leave visible and what they cost in speed, maintainability, and key protection. None of them guarantees invisibility.</p>
+          <p>Part 2 will pick up from here. I will look at control-flow flattening and mixed Boolean-arithmetic, two compiler-level transformations that reshape a program's graph and expressions. I will also explore white-box cryptography, which tries to protect keys even when someone can observe execution and memory.</p>
 
           <div class="sources">
             <p>// references</p>
