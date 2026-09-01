@@ -207,15 +207,6 @@ padding length = 3</code></pre>
 
           <p>Arbitrary bytes also control the UUID version and variant fields. The text has UUID syntax, but it does not automatically represent a standards compliant UUID version. Treat it as a UUID shaped byte container.</p>
 
-          <h2>What changes and what stays the same</h2>
-
-          <p>The container width changes. The padding calculation, loop stride, string buffer size, formatter, and parser change with it. IPv4 uses decimal bytes. IPv6 uses hexadecimal 16 bit groups. MAC uses hexadecimal bytes. UUID uses a fixed hexadecimal field layout.</p>
-
-          <p>The core data never changes. Each technique preserves the padded byte sequence and gives it a familiar text form. Deobfuscation reverses that form and removes the padding.</p>
-
-          <pre class="equation"><code>bytes → pad → split → format → strings
-strings → parse → join → verify padding → bytes</code></pre>
-
           <div class="sources">
             <p>// references</p>
             <p><a href="https://www.rfc-editor.org/rfc/rfc791.html" rel="noreferrer">RFC 791: Internet Protocol</a></p>
