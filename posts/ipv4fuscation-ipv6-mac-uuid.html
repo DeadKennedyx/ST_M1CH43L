@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="A direct look at IPv4fuscation, its padding and decoding process, and how IPv6, MAC, and UUID representations apply the same idea at different byte widths."
+    />
+    <meta name="theme-color" content="#050505" />
+    <title>IPv4fuscation and its IPv6, MAC, and UUID variants - ST_M1CH43L</title>
+    <link
+      rel="canonical"
+      href="https://deadkennedyx.github.io/ST_M1CH43L/posts/ipv4fuscation-ipv6-mac-uuid.html"
+    />
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="post.css" />
+  </head>
+  <body>
+    <div class="post-background" aria-hidden="true"></div>
+    <main class="post-shell">
+      <nav class="post-nav">
+        <a href="../index.html">&lt;- return_home</a>
+        <span>ST_M1CH43L / 003</span>
+      </nav>
+      <p class="post-creed" aria-hidden="true">
+        <span>Christ</span>
+        <span>is king</span>
+      </p>
+
+      <article>
+        <p class="kicker">// transmission 003</p>
+        <h1>IPv4fuscation and its IPv6, MAC, and UUID variants</h1>
+        <p class="post-meta">31.08.26 / 9 min read</p>
+
+        <div class="body-copy">
+          <p>IPv4fuscation changes how bytes look. It does not encrypt them. You take four bytes, write their decimal values as one IPv4 address, and parse that address when you need the original bytes. The same process works with IPv6 addresses, MAC addresses, and UUIDs because each format represents a fixed number of bytes as text.</p>
+
+          <p>This experiment uses <code>Hello, world!</code> so you can follow every value. The input stays harmless and readable. The goal is to understand the representation, the padding, the reverse conversion, and the limits of the technique.</p>
+
+          <h2>Start with what an IPv4 address stores</h2>
+
+          <p>IPv4 uses a 32 bit address. That gives you four octets, and each octet holds one byte from <code>0</code> through <code>255</code>. Dotted decimal notation prints those bytes as four decimal numbers separated by periods.</p>
+
+          <pre class="equation"><code>binary bytes:  C0 A8 01 0A
+decimal text: 192.168.1.10</code></pre>
+
+          <p>The text looks like a network address, but the encoder does not send a packet or assign the address to an interface. It only uses the address grammar as a text container for four bytes.</p>
+
+          <p>Windows exposes both directions through its IP string functions. <code>RtlIpv4AddressToStringA</code> formats four binary bytes. <code>RtlIpv4StringToAddressA</code> parses the text and writes four bytes in network order, from left to right.</p>
+
+          <h2>Turn the message into four byte blocks</h2>
+
+          <p>The message contains 13 bytes and no null terminator:</p>
+
+          <pre><code>48 65 6C 6C 6F 2C 20 77 6F 72 6C 64 21
+ H  e  l  l  o  ,     w  o  r  l  d  !</code></pre>
+
+          <p>Thirteen does not divide evenly by four. The formatter always reads four bytes, so you need a complete final block. PKCS#7 padding solves that problem and also tells the decoder how many bytes to remove.</p>
+
+          <pre class="equation"><code>padding length = 4 − (13 mod 4)
+padding length = 3</code></pre>
+
+          <p>PKCS#7 writes the padding length into every padding byte. The padded buffer contains 16 bytes:</p>
+
+          <pre><code>48 65 6C 6C  6F 2C 20 77  6F 72 6C 64  21 03 03 03</code></pre>
+
+          <p>If your input already fits the block size, PKCS#7 adds a complete block. A four byte aligned IPv4 input receives four bytes with the value <code>04</code>. That rule keeps removal unambiguous.</p>
+
+          <h2>Format each block</h2>
+
+          <p>The encoder reads four bytes at a time and converts each byte from hexadecimal to unsigned decimal:</p>
+
+          <section class="comparison-wrap" aria-label="Hello world IPv4 conversion" tabindex="0">
+            <table class="comparison-table">
+              <thead>
+                <tr>
+                  <th>Input bytes</th>
+                  <th>Meaning</th>
+                  <th>IPv4 text</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>48 65 6C 6C</td>
+                  <td>Hell</td>
+                  <td>72.101.108.108</td>
+                </tr>
+                <tr>
+                  <td>6F 2C 20 77</td>
+                  <td>o, w</td>
+                  <td>111.44.32.119</td>
+                </tr>
+                <tr>
+                  <td>6F 72 6C 64</td>
+                  <td>orld</td>
+                  <td>111.114.108.100</td>
+                </tr>
+                <tr>
+                  <td>21 03 03 03</td>
+                  <td>! plus padding</td>
+                  <td>33.3.3.3</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+
+          <p>The program prints those strings as a C array:</p>
+
+          <pre><code>const CHAR* ipv4Array[4] = {
+    "72.101.108.108",
+    "111.44.32.119",
+    "111.114.108.100",
+    "33.3.3.3"
+};</code></pre>
+
+          <h2>Parse the addresses and remove the padding</h2>
+
+          <p>The decoder allocates four bytes for every array element. It passes each string to <code>RtlIpv4StringToAddressA</code> in strict mode, writes the resulting bytes at the next four byte offset, and checks that the parser consumed the complete string.</p>
+
+          <pre class="equation"><code>four strings × four bytes = 16 decoded bytes</code></pre>
+
+          <p>The decoder then reads the last byte. Its value is <code>03</code>, so the decoder verifies that the last three bytes all contain <code>03</code>. It reports 13 meaningful bytes and ignores the verified padding.</p>
+
+          <pre class="equation"><code>16 decoded bytes − 3 padding bytes = 13 message bytes</code></pre>
+
+          <p>The function transfers the allocated buffer to its caller. The caller prints exactly 13 bytes with <code>fwrite</code>, then releases the allocation with <code>LocalFree</code>. It uses <code>fwrite</code> because the decoded buffer has a length but no null terminator.</p>
+
+          <h2>The same process works at other widths</h2>
+
+          <p>Each variant follows the same sequence. You pad the input to the format width, split it into equal blocks, format every block, parse every string, concatenate the bytes, verify the final padding, and remove it.</p>
+
+          <section class="comparison-wrap" aria-label="Address representation comparison" tabindex="0">
+            <table class="comparison-table">
+              <thead>
+                <tr>
+                  <th>Representation</th>
+                  <th>Bytes per string</th>
+                  <th>Text shape</th>
+                  <th>Padding range</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>IPv4</td>
+                  <td>4</td>
+                  <td>Four decimal octets</td>
+                  <td>1 through 4</td>
+                </tr>
+                <tr>
+                  <td>IPv6</td>
+                  <td>16</td>
+                  <td>Eight hexadecimal groups</td>
+                  <td>1 through 16</td>
+                </tr>
+                <tr>
+                  <td>MAC</td>
+                  <td>6</td>
+                  <td>Six hexadecimal octets</td>
+                  <td>1 through 6</td>
+                </tr>
+                <tr>
+                  <td>UUID</td>
+                  <td>16</td>
+                  <td>Hexadecimal groups in 8, 4, 4, 4, 12 form</td>
+                  <td>1 through 16</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+
+          <h2>IPv6fuscation uses 16 bytes per address</h2>
+
+          <p>IPv6 expands the address width from 32 bits to 128 bits. Its normal text form uses eight groups of 16 bit hexadecimal values. One IPv6 string therefore carries 16 input bytes.</p>
+
+          <p>Our 13 byte message needs three padding bytes under a 16 byte block size. The same padded data fits into one IPv6 address:</p>
+
+          <pre><code>4865:6c6c:6f2c:2077:6f72:6c64:2103:303</code></pre>
+
+          <p>IPv6 permits shorter spellings. A formatter removes leading zeros from a group and replaces one run of zero groups with <code>::</code>. That changes the string, not the 16 decoded bytes. Your decoder should accept valid IPv6 forms and verify that the parser consumed the entire input.</p>
+
+          <p>On Windows, <code>RtlIpv6AddressToStringA</code> performs the forward conversion and <code>RtlIpv6StringToAddressA</code> performs the reverse conversion. The reverse function writes the bytes in network order.</p>
+
+          <h2>MACfuscation uses six bytes per address</h2>
+
+          <p>A common MAC address uses an IEEE EUI 48 value. It contains six bytes and usually appears as six hexadecimal pairs separated by colons or hyphens.</p>
+
+          <p>Thirteen bytes require five padding bytes when the block size is six. The result contains 18 bytes and produces three MAC shaped strings:</p>
+
+          <pre><code>48-65-6C-6C-6F-2C
+20-77-6F-72-6C-64
+21-05-05-05-05-05</code></pre>
+
+          <p>Windows exposes <code>RtlEthernetAddressToStringA</code> and <code>RtlEthernetStringToAddressA</code> for this representation. The process still needs full input validation, padding verification, and correct memory ownership.</p>
+
+          <p>These strings only look like MAC addresses. Arbitrary input controls the individual or group bit and the universal or local bit in the first octet. The resulting value does not claim an IEEE assignment and does not identify real hardware.</p>
+
+          <h2>UUIDfuscation uses another 16 byte container</h2>
+
+          <p>A UUID contains 128 bits, so it carries the same number of bytes as IPv6. Its common text representation uses five hexadecimal groups with lengths of 8, 4, 4, 4, and 12 characters.</p>
+
+          <p>In RFC byte order, the padded message has this UUID shaped representation:</p>
+
+          <pre><code>48656c6c-6f2c-2077-6f72-6c6421030303</code></pre>
+
+          <p>Windows provides <code>UuidToStringA</code> and <code>UuidFromStringA</code> through the RPC runtime. <code>UuidToStringA</code> allocates its output string, and you must release that string with <code>RpcStringFreeA</code>.</p>
+
+          <p>UUID byte order needs extra attention. RFC 9562 stores fields in network byte order, but Microsoft COM GUIDs use little endian storage for the first fields. If you copy arbitrary bytes directly into a Windows <code>UUID</code> structure, the first text groups can appear reordered. Use the same formatter and parser for both directions, then test the exact byte round trip.</p>
+
+          <p>Arbitrary bytes also control the UUID version and variant fields. The text has UUID syntax, but it does not automatically represent a standards compliant UUID version. Treat it as a UUID shaped byte container.</p>
+
+          <h2>What changes and what stays the same</h2>
+
+          <p>The container width changes. The padding calculation, loop stride, string buffer size, formatter, and parser change with it. IPv4 uses decimal bytes. IPv6 uses hexadecimal 16 bit groups. MAC uses hexadecimal bytes. UUID uses a fixed hexadecimal field layout.</p>
+
+          <p>The core data never changes. Each technique preserves the padded byte sequence and gives it a familiar text form. Deobfuscation reverses that form and removes the padding.</p>
+
+          <pre class="equation"><code>bytes → pad → split → format → strings
+strings → parse → join → verify padding → bytes</code></pre>
+
+          <h2>What these techniques do not provide</h2>
+
+          <p>These formats do not provide confidentiality, integrity, or authenticity. Anyone who recognizes the pattern can parse the strings. A debugger also sees the original bytes after the program reconstructs them in memory.</p>
+
+          <p>The representation still leaves clues. An array of address strings has a regular shape. The executable can reference address parsing APIs. The decode loop writes fixed width blocks into one buffer. A detector can normalize the strings and inspect the recovered bytes.</p>
+
+          <p>Use these techniques to study representation and analysis, not to protect secrets. If you need secrecy, use authenticated encryption and manage the key correctly.</p>
+
+          <div class="sources">
+            <p>// references</p>
+            <p><a href="https://www.rfc-editor.org/rfc/rfc791.html" rel="noreferrer">RFC 791: Internet Protocol</a></p>
+            <p><a href="https://www.rfc-editor.org/rfc/rfc8200.html" rel="noreferrer">RFC 8200: Internet Protocol, Version 6</a></p>
+            <p><a href="https://www.rfc-editor.org/rfc/rfc4291.html" rel="noreferrer">RFC 4291: IPv6 Addressing Architecture</a></p>
+            <p><a href="https://www.rfc-editor.org/rfc/rfc5952.html" rel="noreferrer">RFC 5952: IPv6 Text Representation</a></p>
+            <p><a href="https://www.rfc-editor.org/rfc/rfc5652.html" rel="noreferrer">RFC 5652: Cryptographic Message Syntax and padding</a></p>
+            <p><a href="https://www.rfc-editor.org/rfc/rfc9562.html" rel="noreferrer">RFC 9562: Universally Unique Identifiers</a></p>
+            <p><a href="https://standards.ieee.org/faqs/regauth/" rel="noreferrer">IEEE Registration Authority: EUI and MAC address guidance</a></p>
+            <p><a href="https://learn.microsoft.com/en-us/windows/win32/api/ip2string/nf-ip2string-rtlipv4stringtoaddressa" rel="noreferrer">Microsoft Learn: RtlIpv4StringToAddressA</a></p>
+            <p><a href="https://learn.microsoft.com/en-us/windows/win32/api/ip2string/nf-ip2string-rtlipv6stringtoaddressa" rel="noreferrer">Microsoft Learn: RtlIpv6StringToAddressA</a></p>
+            <p><a href="https://learn.microsoft.com/en-us/uwp/win32-and-com/win32-apis" rel="noreferrer">Microsoft Learn: Windows address conversion APIs</a></p>
+            <p><a href="https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-uuidtostringa" rel="noreferrer">Microsoft Learn: UuidToStringA</a></p>
+            <p><a href="https://learn.microsoft.com/en-us/windows/win32/api/rpcdce/nf-rpcdce-uuidfromstringa" rel="noreferrer">Microsoft Learn: UuidFromStringA</a></p>
+          </div>
+        </div>
+
+        <div class="endmark">[eof]</div>
+      </article>
+    </main>
+  </body>
+</html>
