@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Following a stripped Linux binary in GDB, from function arguments and buffer addresses to the first byte decoded with evolving XOR state." />
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#050505" />
+    <title>Following an evolving XOR key in GDB - ST_M1CH43L</title>
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="post.css" />
+  </head>
+  <body>
+    <div class="post-background" aria-hidden="true"></div>
+    <main class="post-shell">
+      <nav class="post-nav">
+        <a href="../index.html">&lt;- return_home</a>
+        <span>ST_M1CH43L / draft</span>
+      </nav>
+      <p class="post-creed" aria-hidden="true"><span>Christ</span><span>is king</span></p>
+
+      <article>
+        <p class="kicker">// working draft</p>
+        <h1>Following an evolving XOR key in GDB</h1>
+        <p class="post-meta">10.09.26 / first iteration</p>
+
+        <div class="body-copy">
+          <p>The part I remembered from a Hack The Box forensics challenge was the XOR. The annoying part was that the state kept changing. Finding one key value didn't explain the rest of the buffer.</p>
+
+          <p>I wanted to work through that idea again, slowly enough to understand what each instruction was doing. So this uses a separate practice binary, <code>xor95</code>, built for the exercise. It isn't a reconstruction of the HTB challenge. It has a 95-byte buffer, two evolving state bytes, and a synthetic flag. The program changes its data in memory; it doesn't execute the decoded buffer.</p>
+
+          <p>This draft stops after the first iteration. There are already a few things worth getting straight before letting the other 94 run.</p>
+
+          <h2>The first XOR wasn't decoding anything</h2>
+
+          <p>The practice executable is a stripped Linux x86-64 ELF, compiled without optimization and with fixed executable addresses to make this first session easier to follow. The addresses below belong to this build. A rebuild can change them, and stack or loader addresses can differ between sessions.</p>
+
+          <pre><code>cd ~/xor95-lab
+readelf -h xor95
+strings -a -n 6 xor95
+gdb -q ./xor95</code></pre>
+
+          <p><code>strings</code> shows printable sequences in the file. The flag doesn't appear. That alone proves very little: unreadable bytes could be compressed data, integers, or any number of other things.</p>
+
+          <pre><code>(gdb) set pagination off
+(gdb) set disassembly-flavor intel
+(gdb) starti
+Program stopped.
+0x00007ffff7fe3d40 in ?? () from /lib64/ld-linux-x86-64.so.2
+(gdb) x/20i $pc
+(gdb) info files</code></pre>
+
+          <p><code>starti</code> stops at the first instruction of execution, which in this session is inside the dynamic loader. The loader prepares the program and its libraries. We're not in the program's own startup code yet. <code>$pc</code> is GDB's name for the program counter, and <code>x/20i $pc</code> disassembles 20 instructions starting there.</p>
+
+          <p>One of the loader instructions is <code>xor ebp,ebp</code>. Easy to spot. Also easy to misinterpret: XORing a value with itself produces zero. This instruction clears a register. Seeing the word <code>xor</code> doesn't establish that a payload is being decoded.</p>
+
+          <p><code>info files</code> gives the executable entry point as <code>0x401050</code>. We can stop there directly:</p>
+
+          <pre><code>(gdb) tbreak *0x401050
+(gdb) continue
+(gdb) x/20i $pc</code></pre>
+
+          <p><code>tbreak</code> sets a temporary breakpoint that disappears after it's hit. The <code>*</code> tells GDB to interpret this as an instruction address. The useful part of the resulting startup disassembly is:</p>
+
+          <pre><code>0x40105f: xor  r8d,r8d
+0x401062: xor  ecx,ecx
+0x401064: mov  rdi,0x4011a2
+0x40106b: call QWORD PTR [rip+0x2f67]  # 0x403fd8</code></pre>
+
+          <p>More register clearing, followed by an address passed to a runtime call. In this C startup sequence, the first argument to the C runtime startup function is the address of <code>main</code>. That makes <code>0x4011a2</code> our candidate.</p>
+
+          <pre><code>(gdb) tbreak *0x4011a2
+(gdb) continue
+(gdb) x/30i $pc
+
+0x4011a2: push rbp
+0x4011a3: mov  rbp,rsp
+0x4011a6: sub  rsp,0x10
+0x4011aa: mov  esi,0x5f
+0x4011af: mov  edi,0x404040
+0x4011b4: call 0x401136</code></pre>
+
+          <p>The rest of this function calls <code>write</code>, <code>read</code>, and <code>write</code> again before returning. The earlier call to <code>0x401136</code> is the one to inspect. Also, <code>x/30i</code> just decodes 30 instructions from memory. It can keep going past a function's return into padding or another function; the amount requested doesn't define a function boundary.</p>
+
+          <h2>Why those registers count as arguments</h2>
+
+          <p>This was one of my first questions: do two <code>mov</code> instructions followed by <code>call</code> always mean a function takes two parameters?</p>
+
+          <p>No. The CPU's <code>call</code> instruction saves a return address and transfers execution. It doesn't count parameters. The caller and the receiving function agree where to put them through a calling convention.</p>
+
+          <p>For ordinary integer and pointer arguments, the <a href="https://gitlab.com/x86-psABIs/x86-64-ABI" rel="noreferrer">System V AMD64 calling convention</a> used here assigns the first six register arguments in this order:</p>
+
+          <pre><code>Argument:   1    2    3    4    5   6
+Register:  RDI  RSI  RDX  RCX  R8  R9</code></pre>
+
+          <p>So <code>mov esi,0x5f</code> prepares the second argument, 95 decimal, and <code>mov edi,0x404040</code> prepares the first. Preparing argument two first doesn't change its position. The register determines the slot.</p>
+
+          <p><code>edi</code> and <code>rdi</code> aren't independent registers. <code>edi</code> names the lower 32 bits of the 64-bit <code>rdi</code>. An x86-64 write to a 32-bit register also clears the upper 32 bits of its corresponding 64-bit register. The same applies to <code>esi</code>/<code>rsi</code> and <code>edx</code>/<code>rdx</code>.</p>
+
+          <pre><code>mov esi,0x5f     ; RSI becomes 0x000000000000005f
+mov edi,0x404040 ; RDI becomes 0x0000000000404040</code></pre>
+
+          <p>Smaller writes behave differently. Writing <code>al</code>, the lowest byte of <code>rax</code>, leaves the other bits of <code>rax</code> alone.</p>
+
+          <p>A large program doesn't have a separate <code>rdi</code> for every function. Within a thread, functions reuse the same registers. We follow the instructions that last assigned their values along the actual execution path. Here, nothing overwrites the argument registers between their setup and the called function saving them. Other threads have their own register state.</p>
+
+          <p>We still need to check how the receiving function uses these values. There could be additional arguments prepared earlier, or the code could use a different convention. Two nearby assignments are evidence, not a function signature.</p>
+
+          <pre><code>(gdb) tbreak *0x401136
+(gdb) continue
+(gdb) disassemble 0x401136,0x4011a2
+
+0x401136: push rbp
+0x401137: mov  rbp,rsp
+0x40113a: mov  QWORD PTR [rbp-0x18],rdi
+0x40113e: mov  DWORD PTR [rbp-0x1c],esi</code></pre>
+
+          <p>The function saves the incoming address and length into stack memory. <code>QWORD</code> means eight bytes, <code>DWORD</code> four. After setting up <code>rbp</code> as a frame pointer, the code uses fixed offsets from it to locate these saved values.</p>
+
+          <pre><code>(gdb) si 4
+0x0000000000401141 in ?? ()
+(gdb) x/gx $rbp-0x18
+0x7fffffffde58: 0x0000000000404040
+(gdb) x/wx $rbp-0x1c
+0x7fffffffde54: 0x0000005f</code></pre>
+
+          <p><code>si</code> abbreviates <code>stepi</code>, which executes one machine instruction. <code>si 4</code> requests four steps; a breakpoint or signal can interrupt that count. Here, it executes exactly the four instructions above. GDB's <a href="https://sourceware.org/gdb/current/onlinedocs/gdb.html/Continuing-and-Stepping.html" rel="noreferrer">instruction stepping commands</a> also include <code>ni</code>, which runs a call until it returns instead of stepping into the function.</p>
+
+          <h2>An address isn't the byte stored there</h2>
+
+          <p>The left side of that first memory read, <code>0x7fffffffde58</code>, is the stack address holding our pointer. The stored value, <code>0x404040</code>, points somewhere else. Keeping those two separate cleared up quite a bit for me.</p>
+
+          <p>Earlier, <code>info files</code> placed <code>.data</code> between <code>0x404020</code> and <code>0x40409f</code>. Our pointer falls inside that initialized, writable data section. It's a virtual address in the running process, not an offset you can use directly to seek through the binary file.</p>
+
+          <p>The next three instructions initialize two bytes and a four-byte counter:</p>
+
+          <pre><code>0x401141: mov BYTE PTR [rbp-0x1],0xa7
+0x401145: mov BYTE PTR [rbp-0x2],0x3d
+0x401149: mov DWORD PTR [rbp-0x8],0x0</code></pre>
+
+          <p>The constants come straight from these instructions. There's no special meaning built into <code>rbp-0x1</code>; the program writes <code>0xa7</code> into memory at that address.</p>
+
+          <pre><code>(gdb) si 3
+(gdb) x/bx $rbp-0x1
+0x7fffffffde6f: 0xa7
+(gdb) x/bx $rbp-0x2
+0x7fffffffde6e: 0x3d
+(gdb) x/wd $rbp-0x8
+0x7fffffffde68: 0
+(gdb) x/16bx 0x404040
+0x404040: 0xd7 0x76 0x95 0x4c 0xa2 0x66 0x7d 0x99
+0x404048: 0xe8 0x57 0x2c 0x60 0x94 0x2c 0xb8 0xaf</code></pre>
+
+          <p>In GDB's <a href="https://sourceware.org/gdb/current/onlinedocs/gdb.html/Memory.html" rel="noreferrer">memory examination syntax</a>, <code>x/16bx</code> asks for 16 bytes in hexadecimal. <code>x/wd</code> reads one four-byte value in decimal. The addresses printed on the left label each row; they aren't extra bytes in the buffer.</p>
+
+          <p>Now the loop reads one byte:</p>
+
+          <pre><code>0x401152: mov   edx,DWORD PTR [rbp-0x8]
+0x401155: mov   rax,QWORD PTR [rbp-0x18]
+0x401159: add   rax,rdx
+0x40115c: movzx eax,BYTE PTR [rax]
+0x40115f: mov   BYTE PTR [rbp-0x9],al</code></pre>
+
+          <p><code>rdx</code> holds the index here because the first instruction loads it from the counter. It isn't permanently an index register. The second instruction loads the buffer address into <code>rax</code>. Then <code>add rax,rdx</code> adds the two numbers:</p>
+
+          <pre><code>buffer start + index = address of selected byte
+
+0x404040 + 0 = 0x404040
+0x404040 + 1 = 0x404041
+0x404040 + 2 = 0x404042</code></pre>
+
+          <p>That's the address calculation behind <code>buffer[index]</code>. Each element is one byte, so adding the index is enough. A four-byte element would need an offset of <code>index * 4</code>.</p>
+
+          <p>The addition only calculates where to read. <code>movzx eax,BYTE PTR [rax]</code> actually reads the byte at that address and zero-extends it into <code>eax</code>. This overwrites the old address in <code>rax</code>. The register has a new job now. The last instruction saves the byte in another stack location, <code>[rbp-0x9]</code>, before anything changes it.</p>
+
+          <h2>Following the byte through XOR</h2>
+
+          <p>This is the evidence that was missing from the first <code>xor ebp,ebp</code>. We have a byte loaded from the buffer, two XORs with separate state values, and a store back into the buffer:</p>
+
+          <pre><code>0x401162: movzx eax,BYTE PTR [rbp-0x9]
+0x401166: xor   al,BYTE PTR [rbp-0x1]
+0x401169: mov   ecx,DWORD PTR [rbp-0x8]
+0x40116c: mov   rdx,QWORD PTR [rbp-0x18]
+0x401170: add   rdx,rcx
+0x401173: xor   al,BYTE PTR [rbp-0x2]
+0x401176: mov   BYTE PTR [rdx],al</code></pre>
+
+          <p>The middle three instructions calculate the destination address again, this time in <code>rdx</code>. That register held the index earlier. Already reused.</p>
+
+          <p>We can describe the operation in C-like notation:</p>
+
+          <pre><code>buffer[index] = original_byte ^ state_a ^ state_b;</code></pre>
+
+          <p>At this stage the assembly establishes an XOR transformation. Decoding is our interpretation to test by inspecting its output. One printable character is a start; a coherent message would be stronger evidence.</p>
+
+          <pre><code>(gdb) tbreak *0x401166
+(gdb) continue
+(gdb) p/x $al
+$1 = 0xd7
+(gdb) si
+(gdb) p/x $al
+$2 = 0x70</code></pre>
+
+          <p>That first step computes <code>0xd7 XOR 0xa7 = 0x70</code>. The result goes into <code>al</code>, the destination operand. The state byte at <code>[rbp-0x1]</code> stays unchanged.</p>
+
+          <pre><code>(gdb) si 3
+(gdb) x/i $pc
+=&gt; 0x401173: xor al,BYTE PTR [rbp-0x2]
+(gdb) si
+(gdb) p/x $al
+$3 = 0x4d
+(gdb) si
+(gdb) x/4bx 0x404040
+0x404040: 0x4d 0x76 0x95 0x4c</code></pre>
+
+          <p>The second XOR gives <code>0x70 XOR 0x3d = 0x4d</code>, ASCII <code>M</code>. The final step writes it into memory. Only the first byte has changed. GDB's numbered value labels, such as <code>$3</code>, depend on how many print commands you've already run.</p>
+
+          <h2>The state moves on</h2>
+
+          <p>Now the part I wanted to revisit. The first state byte gets a fixed increment:</p>
+
+          <pre><code>0x401178: add BYTE PTR [rbp-0x1],0x17
+
+(gdb) si
+(gdb) x/bx $rbp-0x1
+0x7fffffffde6f: 0xbe</code></pre>
+
+          <p><code>0xa7 + 0x17 = 0xbe</code>. Because the destination is one byte, an eventual overflow wraps modulo 256.</p>
+
+          <p>The other update takes more instructions:</p>
+
+          <pre><code>0x40117c: movzx eax,BYTE PTR [rbp-0x2]
+0x401180: lea   edx,[rax+rax*1]
+0x401183: movzx eax,BYTE PTR [rbp-0x2]
+0x401187: shr   al,0x7
+0x40118a: or    eax,edx
+0x40118c: xor   al,BYTE PTR [rbp-0x9]
+0x40118f: mov   BYTE PTR [rbp-0x2],al</code></pre>
+
+          <p><code>lea</code> is the exception to the tempting idea that brackets always mean a memory read. Here it calculates <code>rax + rax * 1</code> and stores the result in <code>edx</code>. It doubles the number. No memory is read by this instruction.</p>
+
+          <p>I had to pause here because doubling a number and shifting bits sounded like different operations. In binary, moving every bit one position left doubles its value:</p>
+
+          <pre><code>0x3d = 00111101 = 61
+0x7a = 01111010 = 122</code></pre>
+
+          <p>That supplies the left-shift portion of a rotation. The code reloads the original byte and shifts it right seven places to extract its highest bit. <code>or eax,edx</code> combines the two pieces. Taking the low byte of that result gives an eight-bit rotation left by one.</p>
+
+          <p>With <code>0x3d</code>, the highest bit is zero, so doubling and rotating happen to give the same value, <code>0x7a</code>. To see the difference, consider <code>0xad</code> as a separate arithmetic example:</p>
+
+          <pre><code>Original:              10101101  0xad
+Shift left, low byte:  01011010  0x5a
+Wrap highest bit:      01011011  0x5b</code></pre>
+
+          <p>Doubling gives <code>0x15a</code>; keeping the low byte gives <code>0x5a</code>. Rotation also brings the original highest bit around to the bottom, producing <code>0x5b</code>.</p>
+
+          <p>Back in our first iteration, the rotated value <code>0x7a</code> is XORed with <code>[rbp-0x9]</code>. That's the saved original byte, <code>0xd7</code>, not the decoded <code>M</code>. Now we know why the code kept that copy.</p>
+
+          <pre><code>Next state B = 0x7a XOR 0xd7 = 0xad
+
+(gdb) si 6
+(gdb) p/x $al
+$4 = 0xad
+(gdb) x/i $pc
+=&gt; 0x40118f: mov BYTE PTR [rbp-0x2],al
+(gdb) si 2
+0x0000000000401196 in ?? ()
+(gdb) x/bx $rbp-0x1
+0x7fffffffde6f: 0xbe
+(gdb) x/bx $rbp-0x2
+0x7fffffffde6e: 0xad
+(gdb) x/wd $rbp-0x8
+0x7fffffffde68: 1</code></pre>
+
+          <p>The six steps reach the final store. The next two execute that store and increment the index. We're now before the loop condition:</p>
+
+          <pre><code>0x401196: mov eax,DWORD PTR [rbp-0x8]
+0x401199: cmp eax,DWORD PTR [rbp-0x1c]
+0x40119c: jb  0x401152</code></pre>
+
+          <p>This is where the saved second argument returns: compare the index with 95 and branch back while it's below the length, using an unsigned comparison. The loop processes byte positions, not lines of a binary.</p>
+
+          <p>I'll call the first state byte the key and the second the IV-like state. Those names describe their roles in this toy construction; the assembly doesn't carry the source variable names, and this isn't a standard cipher. We can now reconstruct the update order:</p>
+
+          <pre><code>original = buffer[index];
+buffer[index] = original ^ key ^ iv;
+key = (key + 0x17) &amp; 0xff;
+iv = rotate_left_8(iv, 1) ^ original;
+index++;</code></pre>
+
+          <p>XOR reverses itself if we use the same state. For the first byte, <code>0x4d XOR 0xa7 XOR 0x3d</code> encodes to <code>0xd7</code>, and XORing <code>0xd7</code> with those same values gets <code>0x4d</code> back. But the state update needs the encoded byte in both directions. An encoder uses its output for that update; this decoder saves its input. Running this exact decoder twice wouldn't generally restore the original buffer.</p>
+
+          <p>That's where this session stops: instruction <code>0x401196</code>, index <code>1</code>, key <code>0xbe</code>, IV-like state <code>0xad</code>. The buffer starts with <code>M</code>, followed by the still-encoded byte <code>0x76</code>. Next session starts there.</p>
+        </div>
+
+        <div class="endmark">[paused]</div>
+      </article>
+    </main>
+  </body>
+</html>
