@@ -111,9 +111,36 @@ ERROR_MANAGER_NO_AUTHORITY     = -6</code></pre>
 
           <p>The native implementation is still unresolved because the IL2CPP dump gives method signatures and RVAs, not readable bodies. The next experiment is to inspect the native code behind the confirmation handler and the protocol registration, then record the actual role values and send path. Until that is done, the finding is “administrative protocol exposed in the client,” not “privilege escalation demonstrated.”</p>
 
+          <h2>Working address map</h2>
+
+          <p>Before opening Ghidra, I wrote down the metadata-to-native mapping. This avoids the easiest mistake in IL2CPP work: finding a plausible function at a nearby address and silently assigning it the wrong managed name.</p>
+
+          <pre><code>Generated metadata                         Native VA
+-------------------------------------------------------------
+Scoped panel confirmation handler          0x18317F310
+Generated confirmation callback            0x18317F680
+Panel close handler                        0x18317F2B0
+Resolved virtual Dispose target            0x182528A90</code></pre>
+
+          <p>The first address I inspected, <code>0x18317F2B0</code>, came from the generated dump entry for the panel close method. It was initially mislabeled in my notes as the confirmation handler. The correction matters because the function’s behavior is only meaningful after the managed identity is established.</p>
+
+          <pre><code class="language-mermaid">0x18317F310  confirmation handler
+       |
+       +--> 0x18317F680  generated callback
+       |
+       +--> [request construction / transport]  (not resolved yet)
+
+0x18317F2B0  close handler
+       |
+       +--> vtable slot 4 at object + 0x178
+                    |
+                    +--> 0x182528A90  BaseBehaviour.Dispose
+                              |
+                              +--> DisposableBehaviour.Dispose</code></pre>
+
           <h2>Correction: the first virtual call was just cleanup</h2>
 
-          <p>This was a useful wrong turn. I initially treated the method at <code>0x18317F2B0</code> as the confirmation handler. The metadata mapping was wrong: it is the panel’s close handler. Once the method name was corrected, the decompiled behavior made much more sense.</p>
+          <p>This was a useful wrong turn. The address was real, but its managed identity was wrong in my working notes. The generated metadata maps <code>0x18317F2B0</code> to the panel’s close handler, not the confirmation handler. Once that mapping was corrected, the decompiled behavior made much more sense.</p>
 
           <p>The tail call resolves through an IL2CPP virtual table:</p>
 
