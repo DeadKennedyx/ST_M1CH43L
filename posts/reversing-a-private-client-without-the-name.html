@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Notes from inspecting an anonymized Unity IL2CPP client, its metadata, bundled assets, and authority-related code paths." />
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#050505" />
+    <title>Reversing a private client without naming it - ST_M1CH43L</title>
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="post.css" />
+  </head>
+  <body>
+    <div class="post-background" aria-hidden="true"></div>
+    <main class="post-shell">
+      <nav class="post-nav"><a href="../index.html">&lt;- return_home</a><span>ST_M1CH43L / draft</span></nav>
+      <p class="post-creed" aria-hidden="true"><span>Christ</span><span>is king</span></p>
+      <article>
+        <p class="kicker">// working draft</p>
+        <h1>Reversing a private client without naming it</h1>
+        <p class="post-meta">15.09.26 / first notes</p>
+
+        <div class="body-copy">
+          <p>I’m deliberately leaving the name out of this one. The application is a privately installed Windows multiplayer client, and the point of these notes is the method, not handing the internet a neat set of search terms for somebody else’s software.</p>
+
+          <p>The first useful thing was simply identifying what kind of Unity build I was looking at. The main executable was accompanied by a large native assembly, a metadata file, and an <code>il2cpp_data</code> directory. That combination is the tell: this is an IL2CPP build, so the managed code isn’t sitting around as ordinary readable assemblies waiting for ILSpy.</p>
+
+          <p>There were still managed-looking DLL names in the scripting assembly manifest. That was a nice little trap. They’re useful clues about namespaces and features, but they aren’t the original source. The interesting logic lives in the native binary, with type and method metadata split across the binary and the metadata file.</p>
+
+          <h2>Metadata first, guessing later</h2>
+
+          <p>I used an IL2CPP metadata dumper against the native assembly and the global metadata file. The generated dummy assemblies and <code>dump.cs</code> were enough to turn a 100-plus-megabyte wall of machine code into something searchable.</p>
+
+          <pre><code>Il2CppDumper.exe \
+  "path\to\GameAssembly.dll" \
+  "path\to\global-metadata.dat"</code></pre>
+
+          <p>The output is not a magic decompilation. A generated method such as <code>SetEntityPermissionsRequest</code> tells us that a type and its signature existed. It does not tell us that the client will accept arbitrary values, or that the server will honor them. That distinction matters, especially in multiplayer software where the server is supposed to make the final decision.</p>
+
+          <p>I renamed the application-specific identifiers in these notes. For example, one scoped-permission request becomes <code>SetEntityPermissionsRequest</code> here. Same meaning, less fingerprinting.</p>
+
+          <h2>The first real lead was permissions, not a cheat switch</h2>
+
+          <p>The generated protocol definitions contained a cluster of fields that looked much more interesting than the usual UI and analytics debris:</p>
+
+          <pre><code>EntityPermissions
+ResourcePermissions
+EventPermissions
+SuspendPermissions
+TaskPermissions
+AutomaticSuspendPermissions
+PermissionDetails</code></pre>
+
+          <p>There were also request/response pairs for changing scoped permissions, manager-level permission updates, and a broadcast-style message carrying permission state. That gives us a real flow to follow: a panel creates a request, a transport sends it, and a response or broadcast updates the UI.</p>
+
+          <p>Several error values explicitly represented “no permission” or a permission failure. That’s useful because it tells us the authorization boundary is expected to be enforced somewhere. It also means a local toggle may only change what the client displays while the server continues to reject the operation. A button appearing is not the same thing as authority.</p>
+
+          <h2>Debug panels are worth checking, carefully</h2>
+
+          <p>String extraction found names resembling a server-switching panel, a test-data selection panel, a protobuf test panel, a performance debug menu, an administration popup, and a few export tools. I’m treating these as leads, not vulnerabilities. Debug code often ships accidentally, but it can also be dead UI, development-only scaffolding, or a panel protected by a server-side role check.</p>
+
+          <p>The next searches are deliberately boring:</p>
+
+          <pre><code>rg -n -i -C 8 \
+  'SetEntityPermissionsRequest|PermissionDetails|AdminAuthorityPanel|DebugServerPanel' \
+  dump.cs
+
+rg -n -i -C 8 \
+  'EntityPermissions *=|PermissionDetails *=|CanManage|IsAdmin|IsGM' \
+  dump.cs</code></pre>
+
+          <p>I’m looking for the enclosing class and the code that decides visibility, not just names that contain “admin.” The useful questions are: what opens the panel, what fields are populated, where is the request sent, and does the client make a local decision based on a role or permission bit?</p>
+
+          <h2>A role-setting path, confirmed</h2>
+
+          <p>The search produced something more concrete than a suspiciously named panel. There is a request/response pair for changing an account’s role within a managed scope:</p>
+
+          <pre><code>SetScopeRoleRequest
+  ScopeId
+  UserId
+  Role
+  PermissionDetails
+
+SetScopeRoleResponse
+  Code
+  ScopeId
+  Role
+  UserId
+  PermissionDetails</code></pre>
+
+          <p>The response code enum is particularly useful evidence. It includes a success value, an administrator-assignment failure, and a manager-without-authority failure. Those names don’t prove the server is secure, but they do show that the intended design includes an authorization decision after the request is sent.</p>
+
+          <pre><code>SUCCESS                         = 0
+ERROR_CANNOT_SET_ADMIN         = -3
+ERROR_MANAGER_NO_AUTHORITY     = -6</code></pre>
+
+          <p>The UI side lines up with it. An anonymized panel contains two permission toggles, a confirmation button, and an <code>OnConfirmButtonClick</code> handler whose generated metadata references the scoped-permission request. So the rough path is:</p>
+
+          <pre><code class="language-mermaid">flowchart LR
+    A[Managed-scope panel] --> B[Permission toggles]
+    B --> C[Confirm handler]
+    C --> D[Build role or permission request]
+    D --> E[Protocol transport]
+    E --> F[Server authorization]
+    F --> G[Success response]
+    F --> H[Permission error]
+    G --> I[Update client state]
+    H --> J[Show failure or leave state unchanged]</code></pre>
+
+          <p>This is the point where I need to stop calling it “god mode.” The client clearly knows how to request role and permission changes. It does not follow that an ordinary account can submit an administrator role and receive it. In fact, the explicit <code>ERROR_CANNOT_SET_ADMIN</code> and <code>ERROR_MANAGER_NO_AUTHORITY</code> values suggest the opposite.</p>
+
+          <p>The native implementation is still unresolved because the IL2CPP dump gives method signatures and RVAs, not readable bodies. The next experiment is to inspect the native code behind the confirmation handler and the protocol registration, then record the actual role values and send path. Until that is done, the finding is “administrative protocol exposed in the client,” not “privilege escalation demonstrated.”</p>
+
+          <h2>What the strings did not show</h2>
+
+          <p>No plaintext administrator password, session token, or obvious god-mode boolean appeared in the collected strings. The apparent URLs were mostly ordinary login, profile, task, and ranking endpoints. Some extracted “URLs” were clearly bundled documentation or unrelated web content, which is why I’m not copying the entire string list into the post. A six-megabyte asset catalog is not evidence; it’s just a six-megabyte asset catalog.</p>
+
+          <p>The authority fields are still the best lead, but they point toward protocol understanding rather than a one-line cheat. I want to map the request and response classes, identify the message transport, and compare the values used by the normal UI with the values accepted by the local client. If the server is doing its job, malformed or elevated values should come back as a permission error.</p>
+
+          <p>For now, the useful result is narrower than “god mode found.” I have a searchable model of the client, a list of administrative-looking surfaces, and one concrete permission-management path worth tracing. That’s enough to keep digging without pretending that a class name is an exploit.</p>
+        </div>
+      </article>
+    </main>
+  </body>
+</html>
