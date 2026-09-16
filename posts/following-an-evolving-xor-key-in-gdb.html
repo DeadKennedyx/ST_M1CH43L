@@ -15,21 +15,21 @@
     <main class="post-shell">
       <nav class="post-nav">
         <a href="../index.html">&lt;- return_home</a>
-        <span>ST_M1CH43L / draft</span>
+        <span>ST_M1CH43L / field note</span>
       </nav>
       <p class="post-creed" aria-hidden="true"><span>Christ</span><span>is king</span></p>
 
       <article>
-        <p class="kicker">// working draft</p>
+        <p class="kicker">// field note</p>
         <h1>Following an evolving XOR key in GDB</h1>
-        <p class="post-meta">10.09.26 / first iteration</p>
+        <p class="post-meta">10.09.26 / 12 min read</p>
 
         <div class="body-copy">
           <p>The part I remembered from a Hack The Box forensics challenge was the XOR. The annoying part was that the state kept changing. Finding one key value didn't explain the rest of the buffer.</p>
 
           <p>I wanted to work through that idea again, slowly enough to understand what each instruction was doing. So this uses a separate practice binary, <code>xor95</code>, built for the exercise. It isn't a reconstruction of the HTB challenge. It has a 95-byte buffer, two evolving state bytes, and a synthetic flag. The program changes its data in memory; it doesn't execute the decoded buffer.</p>
 
-          <p>This draft stops after the first iteration. There are already a few things worth getting straight before letting the other 94 run.</p>
+          <p>The first iteration is enough to establish the method. There are a few things worth getting straight before letting the other 94 run.</p>
 
           <h2>The first XOR wasn't decoding anything</h2>
 
