@@ -111,6 +111,38 @@ ERROR_MANAGER_NO_AUTHORITY     = -6</code></pre>
 
           <p>The native implementation is still unresolved because the IL2CPP dump gives method signatures and RVAs, not readable bodies. The next experiment is to inspect the native code behind the confirmation handler and the protocol registration, then record the actual role values and send path. Until that is done, the finding is “administrative protocol exposed in the client,” not “privilege escalation demonstrated.”</p>
 
+          <h2>Correction: the first virtual call was just cleanup</h2>
+
+          <p>This was a useful wrong turn. I initially treated the method at <code>0x18317F2B0</code> as the confirmation handler. The metadata mapping was wrong: it is the panel’s close handler. Once the method name was corrected, the decompiled behavior made much more sense.</p>
+
+          <p>The tail call resolves through an IL2CPP virtual table:</p>
+
+          <pre><code>MOV  R9, [object]        ; class/vtable pointer
+XOR  R8D, R8D           ; immediate = false
+MOV  DL, 1              ; destroy now = true
+MOV  RAX, [R9 + 0x178]  ; virtual method pointer
+MOV  R9,  [R9 + 0x180]  ; MethodInfo*
+JMP  RAX</code></pre>
+
+          <p>In this metadata layout, the vtable begins at <code>0x138</code>, and each virtual entry occupies <code>0x10</code> bytes: an 8-byte function pointer followed by an 8-byte method-information pointer. Therefore:</p>
+
+          <pre><code>(0x178 - 0x138) / 0x10 = 4</code></pre>
+
+          <p>That makes <code>+0x178</code> virtual slot 4 and <code>+0x180</code> its paired <code>MethodInfo*</code>. Following the inheritance chain in the generated metadata led to the slot-4 override:</p>
+
+          <pre><code>ScopedManagementPanel
+  -> PrefabObject
+    -> BaseBehaviour
+      -> DisposableBehaviour
+
+BaseBehaviour.Dispose(bool destroyNow = true, bool immediate = false)</code></pre>
+
+          <p>The resolved target was renamed <code>BaseBehaviour_Dispose</code> in Ghidra. The call is therefore equivalent to:</p>
+
+          <pre><code>this.Dispose(true, false);</code></pre>
+
+          <p>The values <code>1</code> and <code>0</code> are disposal controls, not permission bits. The real confirmation path remains the method at <code>0x18317F310</code>, with its generated callback at <code>0x18317F680</code>. This is exactly why the metadata mapping has to be checked before interpreting constants in a native function. A plausible-looking integer is not evidence by itself.</p>
+
           <h2>What the strings did not show</h2>
 
           <p>No plaintext administrator password, session token, or obvious god-mode boolean appeared in the collected strings. The apparent URLs were mostly ordinary login, profile, task, and ranking endpoints. Some extracted “URLs” were clearly bundled documentation or unrelated web content, which is why I’m not copying the entire string list into the post. A six-megabyte asset catalog is not evidence; it’s just a six-megabyte asset catalog.</p>
