@@ -184,6 +184,18 @@ h1 {
   tab-size: 4;
 }
 
+.body-copy pre.mermaid {
+  display: flex;
+  justify-content: center;
+  padding: 24px;
+  color: #c7c7c2;
+}
+
+.body-copy pre.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
 .body-copy ul {
   margin: -0.25em 0 1.8em;
   padding-left: 1.2em;

@@ -71,45 +71,15 @@ rg -n -i -C 8 \
 
           <p>I’m looking for the enclosing class and the code that decides visibility, not just names that contain “admin.” The useful questions are: what opens the panel, what fields are populated, where is the request sent, and does the client make a local decision based on a role or permission bit?</p>
 
-          <h2>A role-setting path, confirmed</h2>
+          <h2>Hypothesis: a generic role-setting request</h2>
 
-          <p>The search produced something more concrete than a suspiciously named panel. There is a request/response pair for changing an account’s role within a managed scope:</p>
+          <p>The first string-level pass suggested that the panel might send a generic account-role request containing a scope identifier, user identifier, role, and permission details. Nearby protocol classes had exactly those sorts of fields. That was a reasonable lead, but it was still inference by proximity. Nothing yet connected those classes to this button.</p>
 
-          <pre><code>SetScopeRoleRequest
-  ScopeId
-  UserId
-  Role
-  PermissionDetails
+          <pre><code>H0: confirmation button
+      -> generic role request
+      -> user + role + permission details</code></pre>
 
-SetScopeRoleResponse
-  Code
-  ScopeId
-  Role
-  UserId
-  PermissionDetails</code></pre>
-
-          <p>The response code enum is particularly useful evidence. It includes a success value, an administrator-assignment failure, and a manager-without-authority failure. Those names don’t prove the server is secure, but they do show that the intended design includes an authorization decision after the request is sent.</p>
-
-          <pre><code>SUCCESS                         = 0
-ERROR_CANNOT_SET_ADMIN         = -3
-ERROR_MANAGER_NO_AUTHORITY     = -6</code></pre>
-
-          <p>The UI side lines up with it. An anonymized panel contains two permission toggles, a confirmation button, and an <code>OnConfirmButtonClick</code> handler whose generated metadata references the scoped-permission request. So the rough path is:</p>
-
-          <pre><code class="language-mermaid">flowchart LR
-    A[Managed-scope panel] --> B[Permission toggles]
-    B --> C[Confirm handler]
-    C --> D[Build role or permission request]
-    D --> E[Protocol transport]
-    E --> F[Server authorization]
-    F --> G[Success response]
-    F --> H[Permission error]
-    G --> I[Update client state]
-    H --> J[Show failure or leave state unchanged]</code></pre>
-
-          <p>This is the point where I need to stop calling it “god mode.” The client clearly knows how to request role and permission changes. It does not follow that an ordinary account can submit an administrator role and receive it. In fact, the explicit <code>ERROR_CANNOT_SET_ADMIN</code> and <code>ERROR_MANAGER_NO_AUTHORITY</code> values suggest the opposite.</p>
-
-          <p>The native implementation is still unresolved because the IL2CPP dump gives method signatures and RVAs, not readable bodies. The next experiment is to inspect the native code behind the confirmation handler and the protocol registration, then record the actual role values and send path. Until that is done, the finding is “administrative protocol exposed in the client,” not “privilege escalation demonstrated.”</p>
+          <p>The native trace below falsifies that model for this panel. The actual request has only two protobuf fields: a scope-like identifier and an authority integer. Keeping the failed hypothesis in the notes matters because it shows which conclusion came from strings and which one came from control-flow evidence.</p>
 
           <h2>Working address map</h2>
 
@@ -124,19 +94,22 @@ Resolved virtual Dispose target            0x182528A90</code></pre>
 
           <p>The first address I inspected, <code>0x18317F2B0</code>, came from the generated dump entry for the panel close method. It was initially mislabeled in my notes as the confirmation handler. The correction matters because the function’s behavior is only meaningful after the managed identity is established.</p>
 
-          <pre><code class="language-mermaid">0x18317F310  confirmation handler
-       |
-       +--> 0x18317F680  generated callback
-       |
-       +--> [request construction / transport]  (not resolved yet)
+          <pre class="mermaid">flowchart TD
+    Confirm[0x18317F310 confirmation handler]
+    Callback[0x18317F680 generated callback]
+    GenericSend[0x180AD7F80 generic SendPacket]
+    MessageSend[0x182E73210 IMessage SendPacket]
+    Network[0x182E6C3B0 Network.SendPacket]
+    Pack[0x182E6BC50 Network.PackData]
+    Protobuf[0x181C81F80 protobuf WriteTo]
+    TCP[0x18251C780 TcpClient.Send]
+    Dispose[0x182528A90 BaseBehaviour.Dispose]
 
-0x18317F2B0  close handler
-       |
-       +--> vtable slot 4 at object + 0x178
-                    |
-                    +--> 0x182528A90  BaseBehaviour.Dispose
-                              |
-                              +--> DisposableBehaviour.Dispose</code></pre>
+    Confirm -->|construct delegate| GenericSend
+    GenericSend -->|invoke| Callback
+    Callback -->|ScopeId and Authority| GenericSend
+    GenericSend --> MessageSend --> Network --> Pack --> Protobuf --> TCP
+    Confirm -->|true, false| Dispose</pre>
 
           <h2>Correction: the first virtual call was just cleanup</h2>
 
@@ -170,15 +143,173 @@ BaseBehaviour.Dispose(bool destroyNow = true, bool immediate = false)</code></pr
 
           <p>The values <code>1</code> and <code>0</code> are disposal controls, not permission bits. The real confirmation path remains the method at <code>0x18317F310</code>, with its generated callback at <code>0x18317F680</code>. This is exactly why the metadata mapping has to be checked before interpreting constants in a native function. A plausible-looking integer is not evidence by itself.</p>
 
+          <h2>Experiment: resolve the real confirmation path</h2>
+
+          <p>I repeated the metadata lookup for both remaining addresses. Names below are anonymized aliases, but the addresses, signatures, field offsets, and control flow are unchanged.</p>
+
+          <pre><code>0x18317F310  ScopeAuthorityPanel.OnConfirmButtonClick()
+0x18317F680  ScopeAuthorityPanel.&lt;OnConfirmButtonClick&gt;b__22_0(
+                 SetScopeAuthorityRequest packet)</code></pre>
+
+          <p>Pressing <code>X</code> on those functions returned data references rather than normal code callers:</p>
+
+          <pre><code>Function       Incoming references
+----------------------------------------------
+0x18317F310   0x18771585C DATA, 0x186F969D8 DATA
+0x18317F680   0x1877158A4 DATA, 0x186F969E8 DATA</code></pre>
+
+          <p>That is expected for Unity events and IL2CPP delegates. The code does not call either method with a simple relative <code>CALL</code>. Instead, the hierarchy initializer at <code>0x18317EBB0</code> allocates delegate objects, stores method metadata in them, and registers them as listeners.</p>
+
+          <pre><code>Binding                    Allocate/bind/register sites
+-----------------------------------------------------------------
+permission toggle A       0x18317EECD / 0x18317EEE5 / 0x18317EF00
+permission toggle B       0x18317EF76 / 0x18317EF8E / 0x18317EFA9
+confirmation button       0x18317F017 / 0x18317F02F / 0x18317F051</code></pre>
+
+          <pre class="mermaid">sequenceDiagram
+    participant UI as Unity event
+    participant H as Confirm handler
+    participant P as Protocol&lt;T&gt;
+    participant C as Generated callback
+    participant N as Network layer
+    participant B as Protobuf serializer
+    participant T as TCP client
+
+    UI-&gt;&gt;H: button listener
+    H-&gt;&gt;P: SendPacket(callback, -1, false)
+    P-&gt;&gt;P: allocate or reuse request
+    P-&gt;&gt;C: callback(request)
+    C-&gt;&gt;C: request.ScopeId = panel + 0x84
+    C-&gt;&gt;C: request.Authority = panel + 0x88
+    P-&gt;&gt;N: SendPacket(IMessage, -1)
+    N-&gt;&gt;B: WriteTo(payload buffer)
+    B--&gt;&gt;N: serialized protobuf
+    N-&gt;&gt;T: Send(byte buffer)
+    H-&gt;&gt;H: Dispose(true, false)</pre>
+
+          <h2>The request is smaller than expected</h2>
+
+          <p>The generated callback settled the packet schema. This is not the generic account-role request from the initial hypothesis. The concrete protobuf message has two application fields:</p>
+
+          <pre><code>message SetScopeAuthorityRequest {
+    optional int32 ScopeId   = 1;
+    optional int32 Authority = 2;
+}</code></pre>
+
+          <p>The recovered object layouts line up with those field numbers:</p>
+
+          <pre><code>Panel object
+Offset   Alias              Use
+------------------------------------------------------------
++0x78    _contextInfo       initialized with panel context
++0x80    _localScopeId      loaded during initialization
++0x84    _remoteScopeId     copied to request.ScopeId
++0x88    _currentChoice     copied to request.Authority
++0xA8    _permissionA       represents authority value 1
++0xB0    _permissionB       represents authority value 2
++0xB8    _confirmButton     binds confirmation handler
+
+Request object
+Offset   Alias              Protobuf field
+------------------------------------------------------------
++0x18    _hasBits0          presence bitmap
++0x1C    scopeId_           field 1
++0x20    authority_         field 2</code></pre>
+
+          <p>The first toggle callback at <code>0x18317F510</code> writes <code>1</code> to <code>panel + 0x88</code>. The second callback at <code>0x18317F580</code> writes <code>2</code>. Initialization sets the toggles from the existing authority value without firing their listeners. The confirmation handler itself does not read either toggle; it sends whatever integer is already stored in <code>_currentChoice</code>.</p>
+
+          <pre><code>toggle A callback  -> panel._currentChoice = 1
+toggle B callback  -> panel._currentChoice = 2
+generated callback -> packet.Authority = panel._currentChoice</code></pre>
+
+          <p>The setter constants <code>1</code> and <code>2</code> seen inside the protobuf methods are a separate thing: they are presence-bit masks for fields 1 and 2. The actual authority value comes from <code>panel + 0x88</code>. Same numbers, different jobs. A small coincidence with excellent potential for wasting an afternoon.</p>
+
+          <h2>Calls made by the confirmation handler</h2>
+
+          <pre><code>Call site      Resolved operation                    Classification
+-----------------------------------------------------------------------------
+0x18317F329-  Runtime_OnceInitializer x5             metadata initialization
+0x18317F359
+0x18317F38D   IL2CPP object allocation               allocate delegate
+0x18317F3A5   Action&lt;request&gt; constructor            bind callback at 0x18317F680
+0x18317F3BA   il2cpp_runtime_class_init              protocol static init
+0x18317F3D1   Protocol.SendPacket&lt;request&gt;           first UI/protocol boundary
+0x18317F3F9   BaseBehaviour.Dispose(true, false)     close panel</code></pre>
+
+          <p>The generic send receives the callback, <code>tableId = -1</code>, and <code>shouldShowLoadingMask = false</code>. It obtains a pooled packet or creates a new one, invokes the callback to populate it, then enters the non-generic <code>IMessage</code> path.</p>
+
+          <h2>Calls made by the generated callback</h2>
+
+          <pre><code>Call site      Resolved operation                    Value source
+-----------------------------------------------------------------------------
+0x18317F6A0   Runtime_OnceInitializer                metadata cell
+0x18317F6E2   request.set_ScopeId(int)              panel + 0x84
+0x18317F6FD   request.set_Authority(int)            panel + 0x88
+0x18317F702   null-reference throw helper           packet == null</code></pre>
+
+          <p>There is no user identifier, role object, or permission-details bitmap in this request. The confirmed mapping is only:</p>
+
+          <pre><code>request.ScopeId   &lt;- panel._remoteScopeId
+request.Authority &lt;- panel._currentChoice</code></pre>
+
+          <h2>Serialization and transport boundary</h2>
+
+          <pre><code>Native site      Operation
+-----------------------------------------------------------------------------
+0x180AD7FFC     GetPacket&lt;request&gt;
+0x180AD7E17     Activator.CreateInstance&lt;request&gt; when no pooled object exists
+0x180AD7DAF /   invoke generated population callback
+0x180AD7E38
+0x180AD800D     Protocol.SendPacket(IMessage, int, bool)
+0x182E7352C     Network.SendPacket(IMessage, int)
+0x182E6C73C     Network.PackData(out NativeArray&lt;byte&gt;, IMessage, int)
+0x182E6BF33     IMessage.CalculateSize()
+0x182E6C075     protobuf MessageExtensions.WriteTo(IMessage, Span&lt;byte&gt;)
+0x182E6C7B0     TcpClient.Send(NativeArray&lt;byte&gt;)</code></pre>
+
+          <p>The earliest confirmed UI-to-protocol boundary is <code>0x18317F3D1</code>. Serialization happens at <code>0x182E6C075</code>, and the concrete transport send happens at <code>0x182E6C7B0</code>. That gives the packet-capture phase three good breakpoint locations instead of one vague instruction to “watch the network.”</p>
+
+          <h2>Reproduction record</h2>
+
+          <p>I reproduced the trace by mapping the two VAs back to generated metadata, opening each function in Ghidra, recording incoming references, and exporting the decompilation plus direct and indirect call instructions. Every direct native target was then matched back to its generated VA entry. Finally, I followed the generic protocol method through packet allocation, callback invocation, the non-generic message path, network packing, protobuf serialization, and TCP transmission.</p>
+
+          <pre><code>metadata identity
+  -> native decompilation
+  -> delegate binding
+  -> object offsets
+  -> protobuf setters
+  -> generic protocol send
+  -> network packer
+  -> protobuf serializer
+  -> TCP send</code></pre>
+
+          <p>This proves what the client constructs and where it sends it. It does not yet prove what authority values <code>1</code> and <code>2</code> mean in business terms, whether other integers are accepted, or where the server enforces authorization. Those belong to the packet-capture and response-analysis phase.</p>
+
           <h2>What the strings did not show</h2>
 
-          <p>No plaintext administrator password, session token, or obvious god-mode boolean appeared in the collected strings. The apparent URLs were mostly ordinary login, profile, task, and ranking endpoints. Some extracted “URLs” were clearly bundled documentation or unrelated web content, which is why I’m not copying the entire string list into the post. A six-megabyte asset catalog is not evidence; it’s just a six-megabyte asset catalog.</p>
+          <p>No plaintext administrator password, session token, or obvious god-mode boolean appeared in the collected strings. The apparent URLs were mostly ordinary account and application endpoints. Some extracted “URLs” were clearly bundled documentation or unrelated web content, which is why I’m not copying the entire string list into the post. A six-megabyte asset catalog is not evidence; it’s just a six-megabyte asset catalog.</p>
 
-          <p>The authority fields are still the best lead, but they point toward protocol understanding rather than a one-line cheat. I want to map the request and response classes, identify the message transport, and compare the values used by the normal UI with the values accepted by the local client. If the server is doing its job, malformed or elevated values should come back as a permission error.</p>
+          <p>The authority request is now mapped from UI state to TCP. The next useful evidence will come from correlating a controlled UI action with a packet capture, identifying the application framing around the protobuf payload, and mapping the corresponding response. If the server is doing its job, unsupported or unauthorized state changes should be rejected there.</p>
 
-          <p>For now, the useful result is narrower than “god mode found.” I have a searchable model of the client, a list of administrative-looking surfaces, and one concrete permission-management path worth tracing. That’s enough to keep digging without pretending that a class name is an exploit.</p>
+          <p>For now, the useful result is narrower than “god mode found.” I have a reproducible map from two UI choices to a two-field protobuf request and the exact function that hands its serialized bytes to TCP. That is finally concrete enough to take to Wireshark.</p>
         </div>
       </article>
     </main>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({
+        startOnLoad: true,
+        securityLevel: "strict",
+        theme: "dark",
+        themeVariables: {
+          primaryColor: "#0b0b0b",
+          primaryTextColor: "#e7e7df",
+          primaryBorderColor: "#b6ff00",
+          lineColor: "#8f8f86",
+          secondaryColor: "#111111",
+          tertiaryColor: "#050505"
+        }
+      });
+    </script>
   </body>
 </html>
