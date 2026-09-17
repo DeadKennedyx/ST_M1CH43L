@@ -269,6 +269,219 @@ request.Authority &lt;- panel._currentChoice</code></pre>
 
           <p>The earliest confirmed UI-to-protocol boundary is <code>0x18317F3D1</code>. Serialization happens at <code>0x182E6C075</code>, and the concrete transport send happens at <code>0x182E6C7B0</code>. That gives the packet-capture phase three good breakpoint locations instead of one vague instruction to “watch the network.”</p>
 
+          <h2>The wire map finally gives the client somewhere to point</h2>
+
+          <p>The packet capture filled in the part static analysis couldn’t: where the bytes actually go. I’m keeping the real hostnames and addresses out of the public notes, but the shape of the system is clear enough now.</p>
+
+          <pre class="mermaid">flowchart LR
+    Client["Windows client"]
+    DNS["DNS and service discovery"]
+    Core["Regional entry gateway&lt;br/&gt;TCP 4000&lt;br/&gt;custom envelope + protobuf"]
+    API["API edge&lt;br/&gt;HTTPS 443"]
+    Community["Community edge&lt;br/&gt;HTTPS 443"]
+    Assistant["Assistant service&lt;br/&gt;HTTPS 443"]
+    Assets["Asset CDN&lt;br/&gt;HTTPS 443"]
+    Replay["Replay/content CDN&lt;br/&gt;HTTPS 443"]
+    Logs["Telemetry/log service&lt;br/&gt;HTTPS"]
+    Other["Unattributed UDP service&lt;br/&gt;fixed-size encrypted datagrams"]
+
+    Client --> DNS
+    DNS -.-> Core
+    DNS -.-> API
+    DNS -.-> Community
+    DNS -.-> Assistant
+    DNS -.-> Assets
+    DNS -.-> Replay
+    DNS -.-> Logs
+    Client -->|plaintext application stream| Core
+    Client -->|TLS| API
+    Client -->|TLS| Community
+    Client -->|TLS| Assistant
+    Client -->|TLS| Assets
+    Client -->|TLS| Replay
+    Client -->|TLS / telemetry| Logs
+    Client -.->|keep separate until attributed| Other</pre>
+
+          <p>There’s one especially useful distinction here. The side services speak HTTPS, so the capture mostly gives us DNS, TLS handshakes, timing, and connection sizes. The regional entry gateway uses a long-lived TCP connection whose application identifiers are visible in the payload. That stream is where the interesting correlation lives.</p>
+
+          <h2>Endpoint inventory, minus the fingerprints</h2>
+
+          <p>The capture ran for a little under three minutes from a Windows host. The local address, public service addresses, account identifiers, and the login token-like field are deliberately not copied here. The following is the technical map with those values generalized:</p>
+
+          <div class="comparison-wrap">
+          <table class="comparison-table">
+            <thead>
+              <tr>
+                <th>Layer</th>
+                <th>Public alias</th>
+                <th>Transport</th>
+                <th>What the capture proves</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Core protocol</td>
+                <td><code>regional-entry-gateway</code></td>
+                <td>TCP/4000</td>
+                <td>One long-lived bidirectional stream. Message identifiers and protobuf-shaped bodies are visible.</td>
+              </tr>
+              <tr>
+                <td>Application API</td>
+                <td><code>api-edge</code></td>
+                <td>TLS/443</td>
+                <td>Separate HTTPS connection. Payload content was not interpreted from this capture.</td>
+              </tr>
+              <tr>
+                <td>Community service</td>
+                <td><code>community-edge</code></td>
+                <td>TLS/443</td>
+                <td>Separate HTTPS connection, likely unrelated to the core request transport.</td>
+              </tr>
+              <tr>
+                <td>Assistant service</td>
+                <td><code>assistant-edge</code></td>
+                <td>TLS/443</td>
+                <td>Small HTTPS flow, distinct from the core protocol.</td>
+              </tr>
+              <tr>
+                <td>Assets and replays</td>
+                <td><code>asset-cdn</code>, <code>replay-cdn</code></td>
+                <td>TLS/443</td>
+                <td>CDN connections. URLs for images and replay content appeared inside core responses.</td>
+              </tr>
+              <tr>
+                <td>Telemetry</td>
+                <td><code>client-log-service</code></td>
+                <td>TLS/HTTPS</td>
+                <td>DNS and connection evidence only; not part of the confirmed authority path.</td>
+              </tr>
+              <tr>
+                <td>Unresolved</td>
+                <td><code>unattributed-udp-service</code></td>
+                <td>UDP/1337</td>
+                <td>Repeated fixed-size encrypted datagrams, roughly ten seconds apart. No matching application DNS identity.</td>
+              </tr>
+            </tbody>
+          </table>
+          </div>
+
+          <p>The UDP flow is worth keeping in the notebook, but not folding into the client protocol just because it happened at the same time. Correlation is not attribution. It could be another installed service, a launcher component, or something entirely unrelated.</p>
+
+          <h2>What actually sits inside the TCP stream</h2>
+
+          <p>The core stream is not a raw protobuf byte stream. It has a small application envelope around each logical message:</p>
+
+          <pre><code>TCP
+  custom envelope
+    length / envelope fields
+    ASCII message identifier
+    protobuf body</code></pre>
+
+          <p>A captured frame had this general shape. The values are shown schematically so the example doesn’t become a fingerprint:</p>
+
+          <pre><code>00 ?? 00 ?? | pb.LoginREQ | 00 00 00 00 | protobuf fields ...</code></pre>
+
+          <p>The exact meaning of the envelope length fields is still open. The useful part is already established: the message name is visible, the body follows it, and one TCP segment can contain several logical messages. In other words, TCP segmentation and application framing are two different problems. Mixing them up is how packet parsers become haunted.</p>
+
+          <pre class="mermaid">flowchart TD
+    Bytes["TCP payload bytes"]
+    Frame["Custom application envelope"]
+    Name["Visible message identifier&lt;br/&gt;pb.SomeRequest"]
+    Body["Google.Protobuf body"]
+    Dispatch["Protocol dispatch"]
+    Handler["Request or response handler"]
+
+    Bytes --> Frame --> Name
+    Frame --> Body
+    Name --> Dispatch
+    Body --> Dispatch --> Handler</pre>
+
+          <h2>Startup is noisy, then the UI starts leaving fingerprints</h2>
+
+          <p>The first seconds are mostly login and dashboard bootstrap traffic. The client asks for user information, balances, settings, mail, rewards, room lists, and other housekeeping data. Heartbeats then arrive about every three seconds. Those are useful for identifying the session, but useless for identifying which button I clicked.</p>
+
+          <p>After removing the heartbeat and refresh noise, the capture contains a sequence of isolated request families. The names below are public aliases, not the original product namespace:</p>
+
+          <pre><code>t+00s   LoginREQ / LoginRSP
+t+00s   ScopeListREQ / ScopeListRSP
+t+38s   CreateScopeREQ
+t+82s   ScopeJoinListREQ
+t+82s   ScopeMemberREQ
+t+83s   ScopeMemberDetailREQ
+t+87s   PlayingRoomListREQ
+t+103s  ScopeUpgradeREQ
+t+108s  ScopeUpgradeREQ
+t+109s  ScopeUpgradeREQ
+t+139s  SendMembershipCardREQ
+t+150s  LeagueScopeConditionREQ
+t+154s  LeagueNameREQ
+t+157s  LeagueNameREQ</code></pre>
+
+          <p>The three upgrade requests are a nice example of why the packet names alone aren’t enough. They carry different protobuf values, so they’re useful parser specimens, but they are not the authority request mapped in the native code. The two league-name lookups are closer to the permission-management route, though still not proof that the authority panel was confirmed.</p>
+
+          <pre class="mermaid">timeline
+    title Normalized capture timeline
+    0s : Login and dashboard bootstrap
+    38s : CreateScopeREQ
+    82s : Member and scope navigation queries
+    87s : PlayingRoomListREQ
+    103s : ScopeUpgradeREQ burst begins
+    139s : SendMembershipCardREQ
+    150s : LeagueScopeConditionREQ
+    154s : LeagueNameREQ
+    157s : LeagueNameREQ
+    164s : Capture ends during refresh traffic</pre>
+
+          <h2>The missing packet is itself a result</h2>
+
+          <p>I searched the complete capture, all port-4000 payloads, and the reconstructed core conversation for the authority request and response names. Neither appeared.</p>
+
+          <pre><code>pb.SetScopeAuthorityRequest   not observed
+pb.SetScopeAuthorityResponse  not observed</code></pre>
+
+          <p>That narrows the next experiment. The capture probably ended before the final confirmation, or the panel was opened without pressing Confirm. Another possibility is that the visible actions were upgrade and league-navigation controls rather than the permission toggles. The static path is still interesting; the dynamic proof just hasn’t reached its final packet yet.</p>
+
+          <p>The expected request, based on the decompiled callback, has only two application fields:</p>
+
+          <pre><code>field 1: ScopeId    <- panel._remoteScopeId
+field 2: Authority  <- panel._currentChoice</code></pre>
+
+          <p>For the two known toggle paths, field 2 should be a protobuf varint with value <code>1</code> or <code>2</code>. That’s a prediction from code, not a claim about what the server accepts.</p>
+
+          <h2>Wireshark filters for the next pass</h2>
+
+          <p>For a fresh capture, I don’t need to record every browser tab and Windows service again. These filters separate the useful stream from the wallpaper:</p>
+
+          <pre><code># Core protocol
+tcp.port == 4000
+
+# Visible application messages
+tcp.port == 4000 &amp;&amp; tcp contains "pb."
+
+# The authority request we expect after one controlled confirmation
+tcp.port == 4000 &amp;&amp; tcp contains "SetScopeAuthorityRequest"
+
+# Service discovery for the anonymized entry service
+dns.qry.name contains "entry"
+
+# Keep this unrelated flow out of the first pass
+udp.port == 1337</code></pre>
+
+          <p>If the message name is split across TCP segments, the byte filter may miss it. In that case, select a packet from the core stream, use <strong>Follow -&gt; TCP Stream</strong>, and search the reconstructed ASCII stream. Once the right conversation is selected, recording its <code>tcp.stream</code> number makes later filtering much less annoying.</p>
+
+          <pre class="mermaid">sequenceDiagram
+    participant C as Client
+    participant G as Entry gateway
+    participant W as Wireshark
+
+    C-&gt;&gt;G: Login and bootstrap
+    G--&gt;&gt;C: Responses and refresh data
+    C-&gt;&gt;G: Background heartbeat every few seconds
+    C-&gt;&gt;G: Open authority panel
+    C-&gt;&gt;G: SetScopeAuthorityRequest
+    W--&gt;&gt;W: Follow TCP stream and correlate bytes
+    G--&gt;&gt;C: Response or error (still to identify)</pre>
+
           <h2>Reproduction record</h2>
 
           <p>I reproduced the trace by mapping the two VAs back to generated metadata, opening each function in Ghidra, recording incoming references, and exporting the decompilation plus direct and indirect call instructions. Every direct native target was then matched back to its generated VA entry. Finally, I followed the generic protocol method through packet allocation, callback invocation, the non-generic message path, network packing, protobuf serialization, and TCP transmission.</p>
@@ -289,7 +502,7 @@ request.Authority &lt;- panel._currentChoice</code></pre>
 
           <p>No plaintext administrator password, session token, or obvious god-mode boolean appeared in the collected strings. The apparent URLs were mostly ordinary account and application endpoints. Some extracted “URLs” were clearly bundled documentation or unrelated web content, which is why I’m not copying the entire string list into the post. A six-megabyte asset catalog is not evidence; it’s just a six-megabyte asset catalog.</p>
 
-          <p>The authority request is now mapped from UI state to TCP. The next useful evidence will come from correlating a controlled UI action with a packet capture, identifying the application framing around the protobuf payload, and mapping the corresponding response. If the server is doing its job, unsupported or unauthorized state changes should be rejected there.</p>
+          <p>The authority request is mapped from UI state to the transport boundary, and the surrounding infrastructure is now visible enough to capture it without drowning in browser traffic. The missing piece is a short, controlled trace containing one toggle change and one Confirm click. If the server is doing its job, unsupported or unauthorized state changes should be rejected there.</p>
 
           <p>For now, the useful result is narrower than “god mode found.” I have a reproducible map from two UI choices to a two-field protobuf request and the exact function that hands its serialized bytes to TCP. That is finally concrete enough to take to Wireshark.</p>
         </div>
