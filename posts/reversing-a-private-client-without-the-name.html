@@ -13,12 +13,12 @@
   <body>
     <div class="post-background" aria-hidden="true"></div>
     <main class="post-shell">
-      <nav class="post-nav"><a href="../index.html">&lt;- return_home</a><span>ST_M1CH43L / draft</span></nav>
+      <nav class="post-nav"><a href="../index.html">&lt;- return_home</a><span>ST_M1CH43L / field journal</span></nav>
       <p class="post-creed" aria-hidden="true"><span>Christ</span><span>is king</span></p>
       <article>
-        <p class="kicker">// working draft</p>
+        <p class="kicker">// field journal</p>
         <h1>Reverse Engineering a Distributed Client</h1>
-        <p class="post-meta">15.09.26 / first notes</p>
+        <p class="post-meta">16.09.26 / static analysis pass</p>
 
         <div class="body-copy">
           <p>I’m deliberately leaving the name out of this one. The application is a privately installed Windows multiplayer client, and the point of these notes is the method, not handing the internet a neat set of search terms for somebody else’s software.</p>
@@ -497,6 +497,135 @@ udp.port == 1337</code></pre>
   -> TCP send</code></pre>
 
           <p>This proves what the client constructs and where it sends it. It does not yet prove what authority values <code>1</code> and <code>2</code> mean in business terms, whether other integers are accepted, or where the server enforces authorization. Those belong to the packet-capture and response-analysis phase.</p>
+
+          <h2>The reveal button had two different homes</h2>
+
+          <p>This was a useful correction. I had initially been looking at the historical hand viewer because that was where the reveal control was easiest to see. The live table has a separate controller and a separate visibility routine. Same widget, different route. IL2CPP is very good at making that distinction expensive to discover.</p>
+
+          <p>The current Ghidra program matched the generated metadata exactly: image base <code>0x180000000</code>, native code in the expected IL2CPP block, and every requested virtual address equal to image base plus its generated RVA. The analysis was read-only. No executable bytes or saved patches were involved.</p>
+
+          <div class="comparison-wrap">
+          <table class="comparison-table">
+            <thead>
+              <tr>
+                <th>Generic role</th>
+                <th>Module-relative location</th>
+                <th>What it does</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Live reveal refresh</td>
+                <td><code>GameAssembly + 0x27D6DA0</code></td>
+                <td>Evaluates whether the live-table widget may be shown.</td>
+              </tr>
+              <tr>
+                <td>Unrevealed-card predicate</td>
+                <td><code>GameAssembly + 0x27D16F0</code></td>
+                <td>Scans the active table’s seats.</td>
+              </tr>
+              <tr>
+                <td>Reveal widget</td>
+                <td><code>GameAssembly + 0x2971460</code></td>
+                <td>Shows the widget and its configured cost.</td>
+              </tr>
+              <tr>
+                <td>Request callback</td>
+                <td><code>GameAssembly + 0x2992880</code></td>
+                <td>Places the selected game identifier into the request.</td>
+              </tr>
+              <tr>
+                <td>Response handler</td>
+                <td><code>GameAssembly + 0x289FA90</code></td>
+                <td>Consumes the all-cards response and builds card UI.</td>
+              </tr>
+            </tbody>
+          </table>
+          </div>
+
+          <p>The live controller keeps the reveal widget at a field offset equivalent to <code>+0x168</code>, with a related auxiliary transform at <code>+0x170</code>. The widget itself stores its selected game identifier at <code>+0x88</code>. If that value is empty, the callback falls back to the active table manager’s current game identifier.</p>
+
+          <h2>The client deliberately waits for the hand to finish</h2>
+
+          <p>The live refresh routine begins by hiding the widget and its auxiliary object. It then checks a surprisingly ordinary list of conditions: client variant, whether the hand has already been paid for, the reveal cost, display mode, player seating state, whether private cards exist, and whether any seat still has unrevealed cards.</p>
+
+          <p>The decisive condition is the round stage. The widget is shown only when the stage equals the completed-hand value, not during the stages corresponding to pre-flop, flop, turn, or river. It is then scheduled to disappear after four seconds. So the missing live button is not a rendering mystery. It is an explicit state-machine decision.</p>
+
+          <pre class="mermaid">flowchart TD
+    A[Live table state] --> B[Refresh live reveal widget]
+    B --> C{Completed hand and eligible?}
+    C -- no --> D[Keep widget hidden]
+    C -- yes --> E[Show widget and cost]
+    E --> F[User clicks reveal]
+    F --> G[Build all-cards request]
+    G --> H[Use widget GameId or active manager GameId]
+    H --> I[Protocol envelope and TCP stream]
+    I --> J[All-cards response]
+    J --> K[Live table response handler]</pre>
+
+          <p>That changes the next debugging target. The history routine is still useful for understanding the post-hand UI, but the live gate is the function at <code>GameAssembly + 0x27D6DA0</code>. A runtime observation should start there and follow its call to the unrevealed-card predicate.</p>
+
+          <h2>The response handler is less strict than the button</h2>
+
+          <p>The interesting asymmetry is that the client’s UI gate is stricter than its response handler. The live handler accepts the all-cards response at the “none” and “completed” stages, resolves players by seat, optionally checks the player identifier, and then creates opponent-card UI. It does not compare the response’s game identifier with the manager’s current game identifier.</p>
+
+          <pre><code>response arrives
+  -> stage must be 0 or completed
+  -> player resolved by seat
+  -> optional identity check
+  -> opponent cards converted into table UI
+
+missing explicit check:
+  response.GameId == currentGame.GameId</code></pre>
+
+          <p>That is a client-side trust observation, not a server leak. A server response still has to exist first. A locally replayed response would only prove that the client can be persuaded to process a structurally valid object. The stronger result would be a legitimate request using the active game identifier followed by a response before the hand-completion event.</p>
+
+          <h2>The second capture showed the normal hand protocol</h2>
+
+          <p>A second capture, made during ordinary play, used another regional entry address. I’m leaving the literal addresses out here because they don’t add much to the method and would make the client easier to fingerprint. The stable facts were a long-lived TCP connection on port 4000, a custom application envelope, visible message identifiers, and protobuf-shaped bodies. The HTTPS side services remained separate and encrypted.</p>
+
+          <p>The live hand produced this sequence:</p>
+
+          <pre><code>RoundStartEvent stage 1 + PrivateCardsResponse
+RoundStartEvent stage 2 + flop data
+RoundStartEvent stage 3 + turn data
+RoundStartEvent stage 4 + river data
+RoundOverEvent + ShowdownResponse</code></pre>
+
+          <p>No all-cards request or response appeared in that capture. The same connection also carried history and table-side requests such as <code>HandListRequest</code>, <code>HandInfoRequest</code>, action messages, guess-hand messages, squeeze controls, player lookups, and balance refreshes. Those are useful for mapping the application, but they are not evidence that the hidden-card reveal path was invoked.</p>
+
+          <pre class="mermaid">sequenceDiagram
+    participant C as Windows client
+    participant G as Regional entry stream
+    participant W as Capture
+
+    C-&gt;&gt;G: Hand start event
+    G--&gt;&gt;C: Private cards
+    G--&gt;&gt;C: Flop / turn / river events
+    C-&gt;&gt;G: Normal action requests
+    G--&gt;&gt;C: Round-over and showdown
+    W--&gt;&gt;W: Correlate message names and timing
+    Note over W: No all-cards reveal message observed</pre>
+
+          <h2>History responses do not equal live disclosure</h2>
+
+          <p>The history subsystem has its own request pair. A hand-list request obtains identifiers, a hand-info request obtains completed-hand records, and the history viewer can then ask for all hole cards for a selected game. The historical records showed boards and cards for players whose cards were marked as shown; hidden card arrays stayed empty.</p>
+
+          <pre class="mermaid">flowchart LR
+    A[Completed-hand history] --> B[Hand list request]
+    B --> C[Hand info request]
+    C --> D[Selected history record]
+    D --> E[All-cards request]
+    E --> F[All-cards response]
+    F --> G[History viewer]</pre>
+
+          <p>That explains why clicking the control after a hand works. It also explains why a normal gameplay capture did not contain the response: the client never constructed the request during the active stages. The remaining question is whether the server would reject the same request if the client’s UI gate were bypassed.</p>
+
+          <h2>What this gives us next</h2>
+
+          <p>The next runtime observation belongs at the live refresh routine, not the history routine. If the live widget is initialized during play, the useful breakpoint sequence is the refresh function, the unrevealed-card predicate, the request callback, and the response handler. The point is to see whether the ordinary request path can be made to use the current game identifier before the round-over event.</p>
+
+          <p>A response displayed only because a saved message was injected locally would be a client-validation finding. A response returned for an active hand by the server would be much more serious. Those are different experiments, and the packet capture needs to keep them separate.</p>
 
           <h2>What the strings did not show</h2>
 
